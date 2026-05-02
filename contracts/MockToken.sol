@@ -23,4 +23,12 @@ contract MockToken is ERC20 {
         require(msg.sender == admin, "MockToken: not admin");
         _mint(to, amount);
     }
+
+    /// @notice 覆盖 OpenZeppelin 默认的 18 位小数。
+    ///         ZamaDrop 的所有金额都是 uint64 整数（受 FHE euint64 类型约束），
+    ///         没有小数概念。设为 0 可让 MetaMask 等钱包直接显示原始数值，
+    ///         避免出现 "1000 raw = 0.000000000000001 token" 的错觉。
+    function decimals() public pure override returns (uint8) {
+        return 0;
+    }
 }

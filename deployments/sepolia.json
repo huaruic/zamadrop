@@ -1,30 +1,36 @@
 {
   "network": "sepolia",
   "chainId": 11155111,
-  "deployedAt": "2026-05-02T15:10:00Z",
+  "deployedAt": "2026-05-03T00:14:00Z",
   "deployer": "0x0000000000000000000000000000000000000000",
   "contracts": {
     "MockToken": {
-      "address": "0x0Daa19d2924b434FBBC5e10d7348037DeF843680",
+      "address": "0xE8d42a29c5f796A5E45f4806BB28205EC387A68C",
       "name": "ZamaDrop Test Token",
       "symbol": "ZDT",
+      "decimals": 0,
       "initialSupply": "1000",
-      "explorer": "https://sepolia.etherscan.io/address/0x0Daa19d2924b434FBBC5e10d7348037DeF843680"
+      "explorer": "https://sepolia.etherscan.io/address/0xE8d42a29c5f796A5E45f4806BB28205EC387A68C"
     },
     "ZamaDropCampaign": {
-      "address": "0x2d885c691cEE007ddCE0D1b0d3fC43318B6F9D60",
+      "address": "0x30Af9a636B0284338B5D6CB1DE5DaE3407B6Ed93",
       "declaredTotal": "1000",
       "recipientCount": "2",
       "auditor": "0x0000000000000000000000000000000000000000",
-      "token": "0x0Daa19d2924b434FBBC5e10d7348037DeF843680",
-      "escrowTxHash": "0x57f85bd391e91a877382212596a4878785f52ff58ad535617d276109149a1520",
-      "explorer": "https://sepolia.etherscan.io/address/0x2d885c691cEE007ddCE0D1b0d3fC43318B6F9D60"
+      "token": "0xE8d42a29c5f796A5E45f4806BB28205EC387A68C",
+      "escrowTxHash": "0x4c8236274709246535dc8dbc3079baf9f6665e6391510264343ce417696c888e",
+      "explorer": "https://sepolia.etherscan.io/address/0x30Af9a636B0284338B5D6CB1DE5DaE3407B6Ed93"
     }
   },
   "frontend": {
-    "VITE_TOKEN_ADDRESS": "0x0Daa19d2924b434FBBC5e10d7348037DeF843680",
-    "VITE_CAMPAIGN_ADDRESS": "0x2d885c691cEE007ddCE0D1b0d3fC43318B6F9D60",
+    "VITE_TOKEN_ADDRESS": "0xE8d42a29c5f796A5E45f4806BB28205EC387A68C",
+    "VITE_CAMPAIGN_ADDRESS": "0x30Af9a636B0284338B5D6CB1DE5DaE3407B6Ed93",
     "VITE_ADMIN_ADDRESS": "0x0000000000000000000000000000000000000000",
     "VITE_AUDITOR_ADDRESS": "0x0000000000000000000000000000000000000000"
+  },
+  "previousDeployments": {
+    "note": "之前的部署使用了 decimals=18 默认值，导致 MetaMask 显示精度问题，已弃用",
+    "MockToken": "0x0Daa19d2924b434FBBC5e10d7348037DeF843680",
+    "ZamaDropCampaign": "0x2d885c691cEE007ddCE0D1b0d3fC43318B6F9D60"
   }
 }
