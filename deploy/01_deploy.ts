@@ -27,9 +27,13 @@ async function main() {
 
   const [deployer] = await ethers.getSigners();
 
-  const declaredTotal = BigInt(process.env.DECLARED_TOTAL ?? "1000");
-  const recipientCount = BigInt(process.env.RECIPIENT_COUNT ?? "2");
-  const auditorAddress = process.env.AUDITOR_ADDRESS ?? deployer.address;
+  // 处理空字符串 fallback：?? 只对 null/undefined 生效，空字符串需要单独判断
+  const nonEmpty = (v?: string) => (v && v.trim() !== "" ? v : undefined);
+
+  const declaredTotal = BigInt(nonEmpty(process.env.DECLARED_TOTAL) ?? "1000");
+  const recipientCount = BigInt(nonEmpty(process.env.RECIPIENT_COUNT) ?? "2");
+  const auditorAddress = nonEmpty(process.env.AUDITOR_ADDRESS) ?? deployer.address;
+  const existingToken = nonEmpty(process.env.EXISTING_TOKEN_ADDRESS);
 
   console.log("=== ZamaDrop Deployment ===");
   console.log("Deployer (admin):", deployer.address);
@@ -38,17 +42,25 @@ async function main() {
   console.log("Recipient count: ", recipientCount.toString());
   console.log("");
 
-  // 1. Deploy MockToken (admin auto-receives initialSupply)
-  const MockToken = await ethers.getContractFactory("MockToken");
-  const token = await MockToken.deploy(
-    "ZamaDrop Test Token",
-    "ZDT",
-    declaredTotal,
-    deployer.address,
-  );
-  await token.waitForDeployment();
-  const tokenAddress = await token.getAddress();
-  console.log("MockToken deployed at:        ", tokenAddress);
+  // 1. Deploy MockToken（如果环境变量提供了已存在的地址，复用以节省 gas）
+  let tokenAddress: string;
+  let token: any;
+  if (existingToken) {
+    tokenAddress = existingToken;
+    token = await ethers.getContractAt("MockToken", tokenAddress);
+    console.log("MockToken (reused):           ", tokenAddress);
+  } else {
+    const MockToken = await ethers.getContractFactory("MockToken");
+    token = await MockToken.deploy(
+      "ZamaDrop Test Token",
+      "ZDT",
+      declaredTotal,
+      deployer.address,
+    );
+    await token.waitForDeployment();
+    tokenAddress = await token.getAddress();
+    console.log("MockToken deployed at:        ", tokenAddress);
+  }
 
   // 2. Deploy ZamaDropCampaign with token address
   const Campaign = await ethers.getContractFactory("ZamaDropCampaign");
@@ -63,6 +75,13 @@ async function main() {
   console.log("ZamaDropCampaign deployed at: ", campaignAddress);
 
   // 3. Admin transfers declaredTotal tokens to campaign as escrow
+  const adminBalance = await token.balanceOf(deployer.address);
+  if (adminBalance < declaredTotal) {
+    throw new Error(
+      `Admin token balance (${adminBalance}) < declaredTotal (${declaredTotal}). ` +
+        `If reusing an existing token, mint more or use a fresh deployment.`,
+    );
+  }
   const transferTx = await token.transfer(campaignAddress, declaredTotal);
   await transferTx.wait();
   const escrowBalance = await token.balanceOf(campaignAddress);
