@@ -89,7 +89,11 @@ npm run lint           # 代码检查
   - MockToken: `0x0Daa19d2924b434FBBC5e10d7348037DeF843680`
   - ZamaDropCampaign: `0x2d885c691cEE007ddCE0D1b0d3fC43318B6F9D60`
   - 完整地址记录在 `deployments/sepolia.json`
-  - Gas 消耗：~0.0026 SepoliaETH（4 笔交易：deploy MockToken + deploy Campaign + escrow transfer）
+- **Day 4.5**：✅ Sepolia 端到端实战验证（`scripts/e2e-sepolia.ts`）
+  - 完整跑通：setAllocation × 2 → finalize → publicDecrypt → callbackFinalize → claim → publicDecrypt → executeTransfer
+  - 6 笔真实交易上链，ZDT 600 到账
+  - **前提条件 #2 #5 实测通过**，KMS 公开解密 30~60s
+  - 交易记录：`openspec/changes/004-e2e-sepolia-validation.md`
 
 ### 🔲 下一步（按优先级）
 1. **Day 5**：Frontend：Next.js + wagmi + fhevmjs，四角色界面（Public/Admin/Recipient/Auditor）
