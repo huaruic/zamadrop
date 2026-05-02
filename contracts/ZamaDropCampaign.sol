@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {FHE, euint64, externalEuint64, ebool} from "@fhevm/solidity/lib/FHE.sol";
 import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title ZamaDropCampaign
@@ -25,6 +26,9 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
     error AllocationAlreadySet();
     error NoAllocation();
     error AlreadyClaimed();
+    error NotClaimed();
+    error AlreadyTransferred();
+    error AmountMismatch();
 
     // ─────────────────────────────────────────────
     // 明文公开状态
@@ -33,11 +37,14 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
     uint64 public immutable recipientCount;
     address public immutable admin;
     address public immutable auditor;
+    IERC20 public immutable token;
 
     bool public finalized;
 
     mapping(address => bool) public allocationSet;
     mapping(address => bool) public claimed;
+    mapping(address => bytes32) public pendingClaimHandle;
+    mapping(address => bool) public transferred;
 
     // finalize 产生的 ebool 密文 handle，供链下 publicDecrypt 使用
     bytes32 public finalizeCheckHandle;
@@ -56,15 +63,18 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
     event FinalizeRequested(bytes32 checkHandle);
     event Finalized(bool success);
     event Claimed(address indexed recipient);
+    event ClaimRequested(address indexed user, bytes32 handle);
+    event TokenTransferred(address indexed user, uint64 amount);
 
     // ─────────────────────────────────────────────
     // 构造函数
     // ─────────────────────────────────────────────
-    constructor(uint64 _declaredTotal, uint64 _recipientCount, address _auditor) {
+    constructor(uint64 _declaredTotal, uint64 _recipientCount, address _auditor, address _token) {
         declaredTotal = _declaredTotal;
         recipientCount = _recipientCount;
         admin = msg.sender;
         auditor = _auditor;
+        token = IERC20(_token);
 
         // 初始化加密零值
         _runningTotal = FHE.asEuint64(0);
@@ -174,10 +184,28 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
         FHE.allowThis(_claimedTotal);
         FHE.allow(_claimedTotal, auditor);
 
-        // TODO Day 5：接入真实代币 transfer（或 ERC7984 confidential transfer）
-        // 目前以事件模拟，Demo 展示密文保护的 allocation 已被消费
-
         emit Claimed(msg.sender);
+
+        // 标记该用户 allocation 为公开可解密，链下 oracle 解密后调用 executeTransfer
+        _allocation[msg.sender] = FHE.makePubliclyDecryptable(_allocation[msg.sender]);
+        pendingClaimHandle[msg.sender] = bytes32(euint64.unwrap(_allocation[msg.sender]));
+        emit ClaimRequested(msg.sender, pendingClaimHandle[msg.sender]);
+    }
+
+    // ─────────────────────────────────────────────
+    // 链下 oracle：执行 token 转账
+    // ─────────────────────────────────────────────
+    /**
+     * @notice 链下 oracle 公开解密 pendingClaimHandle[user] 后调用此函数完成转账。
+     *         MVP 阶段：任何人可调用（信任链下 publicDecrypt 的诚实性）。
+     *         生产环境：应验证 KMS 签名 + amount 与 handle 解密结果一致。
+     */
+    function executeTransfer(address user, uint64 amount) external {
+        if (!claimed[user]) revert NotClaimed();
+        if (transferred[user]) revert AlreadyTransferred();
+        transferred[user] = true;
+        require(token.transfer(user, amount), "token transfer failed");
+        emit TokenTransferred(user, amount);
     }
 
     // ─────────────────────────────────────────────

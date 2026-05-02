@@ -1,7 +1,10 @@
 import "@fhevm/hardhat-plugin";
 import "@nomicfoundation/hardhat-toolbox";
 import "hardhat-deploy";
+import * as dotenv from "dotenv";
 import { HardhatUserConfig } from "hardhat/config";
+
+dotenv.config();
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -16,11 +19,11 @@ const config: HardhatUserConfig = {
     hardhat: {
       chainId: 31337,
     },
-    // Zama testnet — 部署时填入
-    // zamaTestnet: {
-    //   url: process.env.ZAMA_TESTNET_URL || "",
-    //   accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
-    // },
+    zamaTestnet: {
+      url: process.env.ZAMA_TESTNET_URL || "https://devnet.zama.ai",
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      chainId: parseInt(process.env.ZAMA_TESTNET_CHAIN_ID || "8009"),
+    },
   },
   paths: {
     sources: "./contracts",

@@ -18,6 +18,7 @@ async function encryptAmount(
 describe("ZamaDropCampaign", function () {
   let contractAddress: string;
   let contract: Awaited<ReturnType<typeof ethers.getContractAt>>;
+  let tokenContract: Awaited<ReturnType<typeof ethers.getContractAt>>;
   let admin: HardhatEthersSigner;
   let recipient1: HardhatEthersSigner;
   let recipient2: HardhatEthersSigner;
@@ -32,15 +33,31 @@ describe("ZamaDropCampaign", function () {
   beforeEach(async function () {
     [admin, recipient1, recipient2, auditor, other] = await ethers.getSigners();
 
+    // 部署 MockToken（admin 持有 declaredTotal）
+    const TokenFactory = await ethers.getContractFactory("MockToken");
+    const token = await TokenFactory.connect(admin).deploy(
+      "ZamaDrop Test Token",
+      "ZDT",
+      DECLARED_TOTAL,
+      admin.address
+    );
+    await token.waitForDeployment();
+    const tokenAddress = await token.getAddress();
+
     const Factory = await ethers.getContractFactory("ZamaDropCampaign");
     const deployed = await Factory.connect(admin).deploy(
       DECLARED_TOTAL,
       RECIPIENT_COUNT,
-      auditor.address
+      auditor.address,
+      tokenAddress
     );
     await deployed.waitForDeployment();
     contractAddress = await deployed.getAddress();
     contract = await ethers.getContractAt("ZamaDropCampaign", contractAddress);
+    tokenContract = await ethers.getContractAt("MockToken", tokenAddress);
+
+    // 把 escrow 转入 campaign 合约（让 executeTransfer 时有钱可转）
+    await token.connect(admin).transfer(contractAddress, DECLARED_TOTAL);
   });
 
   // ─────────────────────────────────────────────
@@ -225,9 +242,22 @@ describe("ZamaDropCampaign", function () {
     });
 
     it("finalize 前 claim 应 revert", async function () {
-      // 重新部署一个未 finalize 的合约
+      // 重新部署一个未 finalize 的合约（同时部署一个 fresh token）
+      const TokenFactory = await ethers.getContractFactory("MockToken");
+      const freshToken = await TokenFactory.connect(admin).deploy(
+        "ZamaDrop Test Token",
+        "ZDT",
+        DECLARED_TOTAL,
+        admin.address
+      );
+      await freshToken.waitForDeployment();
       const Factory = await ethers.getContractFactory("ZamaDropCampaign");
-      const fresh = await Factory.connect(admin).deploy(DECLARED_TOTAL, RECIPIENT_COUNT, auditor.address);
+      const fresh = await Factory.connect(admin).deploy(
+        DECLARED_TOTAL,
+        RECIPIENT_COUNT,
+        auditor.address,
+        await freshToken.getAddress()
+      );
       await fresh.waitForDeployment();
       await expect(
         fresh.connect(recipient1).claim()
@@ -274,6 +304,69 @@ describe("ZamaDropCampaign", function () {
         auditor
       );
       expect(total).to.equal(0n);
+    });
+  });
+
+  // ─────────────────────────────────────────────
+  // token integration
+  // ─────────────────────────────────────────────
+  describe("token integration", function () {
+    beforeEach(async function () {
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await contract.connect(admin).finalize();
+      const handle = await contract.finalizeCheckHandle();
+      const result = await hre.fhevm.publicDecryptEbool(handle);
+      await contract.connect(admin).callbackFinalize(result);
+    });
+
+    it("claim 应发出 ClaimRequested 事件并存储 pendingClaimHandle", async function () {
+      await expect(contract.connect(recipient1).claim())
+        .to.emit(contract, "ClaimRequested");
+
+      const pending = await contract.pendingClaimHandle(recipient1.address);
+      expect(pending).to.not.equal(
+        "0x0000000000000000000000000000000000000000000000000000000000000000"
+      );
+    });
+
+    it("executeTransfer 应成功转账并更新 transferred", async function () {
+      await contract.connect(recipient1).claim();
+
+      const balanceBefore = await tokenContract.balanceOf(recipient1.address);
+      expect(balanceBefore).to.equal(0n);
+
+      await expect(contract.connect(other).executeTransfer(recipient1.address, ALLOC_1))
+        .to.emit(contract, "TokenTransferred")
+        .withArgs(recipient1.address, ALLOC_1);
+
+      expect(await contract.transferred(recipient1.address)).to.equal(true);
+      expect(await tokenContract.balanceOf(recipient1.address)).to.equal(ALLOC_1);
+    });
+
+    it("未 claim 时调用 executeTransfer 应 revert", async function () {
+      await expect(
+        contract.connect(other).executeTransfer(recipient2.address, ALLOC_2)
+      ).to.be.revertedWithCustomError(contract, "NotClaimed");
+    });
+
+    it("重复 executeTransfer 应 revert", async function () {
+      await contract.connect(recipient1).claim();
+      await contract.connect(other).executeTransfer(recipient1.address, ALLOC_1);
+
+      await expect(
+        contract.connect(other).executeTransfer(recipient1.address, ALLOC_1)
+      ).to.be.revertedWithCustomError(contract, "AlreadyTransferred");
+    });
+
+    it("claim 后 pendingClaimHandle 可被 publicDecrypt 解密为正确 amount", async function () {
+      await contract.connect(recipient1).claim();
+      const pending = await contract.pendingClaimHandle(recipient1.address);
+      const decrypted = await hre.fhevm.publicDecryptEuint(FhevmType.euint64, pending);
+      expect(decrypted).to.equal(ALLOC_1);
     });
   });
 });

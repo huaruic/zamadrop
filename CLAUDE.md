@@ -77,21 +77,26 @@ npm run lint           # 代码检查
 ## 当前进度（每次完成阶段后更新）
 
 ### ✅ 已完成
-- `contracts/ZamaDropCampaign.sol`：核心合约，全部函数实现
-- `test/ZamaDropCampaign.test.ts`：18 个测试，全绿（fhEVM mock 环境）
-- 工程脚手架：Hardhat + TypeScript + @fhevm/solidity ^0.11.1
+- **Day 1-2**：`contracts/ZamaDropCampaign.sol` 核心合约 + 18 测试全绿
+- **Day 3**：
+  - `contracts/MockToken.sol`：OpenZeppelin ERC20 测试代币
+  - ZamaDropCampaign 增加 `IERC20 token` 状态、`claim()` 标记可公开解密、`executeTransfer()` 实际转账
+  - `deploy/01_deploy.ts`：部署脚本（本地已验证可跑通）
+  - `hardhat.config.ts`：dotenv + zamaTestnet 网络配置
+  - `.env.example`：环境变量模板
+  - 测试扩展到 23 个，全绿
 
 ### 🔲 下一步（按优先级）
-1. **Day 3**：`deploy/01_deploy.ts` 部署脚本 + Zama testnet 部署
-2. **Day 3**：`claim()` 接入真实 ERC20 transfer（当前只发事件）
-3. **Day 5**：Frontend：Next.js + wagmi + fhevmjs，四角色界面
+1. **Day 4**：Zama testnet 实际部署 + gas 测量（需要 testnet 钱包和 RPC URL）
+2. **Day 5**：Frontend：Next.js + wagmi + fhevmjs，四角色界面（Public/Admin/Recipient/Auditor）
+3. **Day 6**：链下 oracle 服务（监听 ClaimRequested → publicDecrypt → 调 executeTransfer）
 4. **Day 7**：README + 架构图 + Demo 脚本排练
 5. **Day 8**：录制 2 分钟真人出镜视频
 
 ### ⚠️ 待确认的技术细节
-- `callbackFinalize(bool)` 目前无签名验证，Testnet 部署前需要加 KMS 签名校验（或接受简化版）
-- `claim()` 中 token transfer 待接入：需要部署一个 ERC20 并让合约持有余额
-- Zama testnet RPC URL 和 private key 需要在 `.env` 里配置（`.env` 已 gitignore）
+- `callbackFinalize(bool)` 和 `executeTransfer(uint64)` 目前无签名验证，Testnet 部署前需要加 KMS 签名校验（或文档说明 MVP 信任假设）
+- Zama testnet RPC URL 和 chainId 需以官方文档为准（当前 .env.example 是占位符）
+- `executeTransfer` 由谁调用：MVP 用前端轮询 + 链下脚本，生产应有专用 oracle
 
 ## 不做（MVP 范围外）
 
