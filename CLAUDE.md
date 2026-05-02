@@ -81,17 +81,21 @@ npm run lint           # 代码检查
 - **Day 3**：
   - `contracts/MockToken.sol`：OpenZeppelin ERC20 测试代币
   - ZamaDropCampaign 增加 `IERC20 token` 状态、`claim()` 标记可公开解密、`executeTransfer()` 实际转账
-  - `deploy/01_deploy.ts`：部署脚本（本地已验证可跑通）
-  - `hardhat.config.ts`：dotenv + zamaTestnet 网络配置
+  - `deploy/01_deploy.ts`：部署脚本（本地 + Sepolia 已验证）
+  - `hardhat.config.ts`：dotenv + Sepolia 网络配置
   - `.env.example`：环境变量模板
   - 测试扩展到 23 个，全绿
+- **Day 4**：✅ Sepolia 部署完成
+  - MockToken: `0x0Daa19d2924b434FBBC5e10d7348037DeF843680`
+  - ZamaDropCampaign: `0x2d885c691cEE007ddCE0D1b0d3fC43318B6F9D60`
+  - 完整地址记录在 `deployments/sepolia.json`
+  - Gas 消耗：~0.0026 SepoliaETH（4 笔交易：deploy MockToken + deploy Campaign + escrow transfer）
 
 ### 🔲 下一步（按优先级）
-1. **Day 4**：Sepolia 实际部署 + gas 测量（用户需新建钱包 + 领 SepoliaETH，详见 `docs/deploy.md`）
-2. **Day 5**：Frontend：Next.js + wagmi + fhevmjs，四角色界面（Public/Admin/Recipient/Auditor）
-3. **Day 6**：链下 oracle 服务（监听 ClaimRequested → publicDecrypt → 调 executeTransfer）
-4. **Day 7**：README + 架构图 + Demo 脚本排练
-5. **Day 8**：录制 2 分钟真人出镜视频
+1. **Day 5**：Frontend：Next.js + wagmi + fhevmjs，四角色界面（Public/Admin/Recipient/Auditor）
+2. **Day 6**：链下 oracle 服务（监听 ClaimRequested → publicDecrypt → 调 executeTransfer）
+3. **Day 7**：README + 架构图 + Demo 脚本排练；Sepolia 上跑一次端到端 setAllocation→finalize→claim→executeTransfer 的真实交易留作视频素材
+4. **Day 8**：录制 2 分钟真人出镜视频
 
 ### ⚠️ 待确认的技术细节
 - `callbackFinalize(bool)` 和 `executeTransfer(uint64)` 目前无签名验证，Testnet 部署前需要加 KMS 签名校验（或文档说明 MVP 信任假设）
