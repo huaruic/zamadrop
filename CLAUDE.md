@@ -74,6 +74,25 @@ npm run lint           # 代码检查
 
 位于：`~/.gstack/projects/zamaDrop/internal-design-note.md`
 
+## 当前进度（每次完成阶段后更新）
+
+### ✅ 已完成
+- `contracts/ZamaDropCampaign.sol`：核心合约，全部函数实现
+- `test/ZamaDropCampaign.test.ts`：18 个测试，全绿（fhEVM mock 环境）
+- 工程脚手架：Hardhat + TypeScript + @fhevm/solidity ^0.11.1
+
+### 🔲 下一步（按优先级）
+1. **Day 3**：`deploy/01_deploy.ts` 部署脚本 + Zama testnet 部署
+2. **Day 3**：`claim()` 接入真实 ERC20 transfer（当前只发事件）
+3. **Day 5**：Frontend：Next.js + wagmi + fhevmjs，四角色界面
+4. **Day 7**：README + 架构图 + Demo 脚本排练
+5. **Day 8**：录制 2 分钟真人出镜视频
+
+### ⚠️ 待确认的技术细节
+- `callbackFinalize(bool)` 目前无签名验证，Testnet 部署前需要加 KMS 签名校验（或接受简化版）
+- `claim()` 中 token transfer 待接入：需要部署一个 ERC20 并让合约持有余额
+- Zama testnet RPC URL 和 private key 需要在 `.env` 里配置（`.env` 已 gitignore）
+
 ## 不做（MVP 范围外）
 
 - Merkle proof 资格验证
