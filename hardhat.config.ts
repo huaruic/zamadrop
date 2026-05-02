@@ -19,10 +19,10 @@ const config: HardhatUserConfig = {
     hardhat: {
       chainId: 31337,
     },
-    zamaTestnet: {
-      url: process.env.ZAMA_TESTNET_URL || "https://devnet.zama.ai",
+    sepolia: {
+      url: process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia.publicnode.com",
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
-      chainId: parseInt(process.env.ZAMA_TESTNET_CHAIN_ID || "8009"),
+      chainId: 11155111,
     },
   },
   paths: {

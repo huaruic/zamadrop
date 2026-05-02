@@ -87,7 +87,7 @@ npm run lint           # 代码检查
   - 测试扩展到 23 个，全绿
 
 ### 🔲 下一步（按优先级）
-1. **Day 4**：Zama testnet 实际部署 + gas 测量（需要 testnet 钱包和 RPC URL）
+1. **Day 4**：Sepolia 实际部署 + gas 测量（用户需新建钱包 + 领 SepoliaETH，详见 `docs/deploy.md`）
 2. **Day 5**：Frontend：Next.js + wagmi + fhevmjs，四角色界面（Public/Admin/Recipient/Auditor）
 3. **Day 6**：链下 oracle 服务（监听 ClaimRequested → publicDecrypt → 调 executeTransfer）
 4. **Day 7**：README + 架构图 + Demo 脚本排练
