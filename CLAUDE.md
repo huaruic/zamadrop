@@ -96,10 +96,19 @@ npm run lint           # 代码检查
   - 交易记录：`openspec/changes/004-e2e-sepolia-validation.md`
 
 ### 🔲 下一步（按优先级）
-1. **Day 5**：Frontend：Next.js + wagmi + fhevmjs，四角色界面（Public/Admin/Recipient/Auditor）
-2. **Day 6**：链下 oracle 服务（监听 ClaimRequested → publicDecrypt → 调 executeTransfer）
-3. **Day 7**：README + 架构图 + Demo 脚本排练；Sepolia 上跑一次端到端 setAllocation→finalize→claim→executeTransfer 的真实交易留作视频素材
-4. **Day 8**：录制 2 分钟真人出镜视频
+1. **Day 6**：浏览器实战：从 frontend 真实跑通四角色流程，可能需要修 bug
+2. **Day 7**：README + 架构图 + Demo 脚本排练
+3. **Day 8**：录制 2 分钟真人出镜视频
+
+### Day 5 已完成
+- Frontend：Vite + React 19 + wagmi v3 + @zama-fhe/relayer-sdk
+- 四个标签：Public / Admin / Recipient / Auditor
+- 端到端核心流程已布线，dev server 在 localhost:5173
+
+### 启动 Frontend
+```bash
+cd frontend && npm run dev
+```
 
 ### ⚠️ 待确认的技术细节
 - `callbackFinalize(bool)` 和 `executeTransfer(uint64)` 目前无签名验证，Testnet 部署前需要加 KMS 签名校验（或文档说明 MVP 信任假设）
