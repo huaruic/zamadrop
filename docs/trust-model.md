@@ -96,9 +96,9 @@ escrow before the rest are paid. There is no on-chain check tying
 
 ### 3.3 Admin and Auditor share a wallet in the demo deployment
 
-**What this means**: In `deployments/sepolia.json` the `admin` and
-`auditor` slots both resolve to `0x0000000000000000000000000000000000000000`.
-The same key that sets allocations also re-encrypts `claimedTotal`.
+**What this means**: In the current `deployments/sepolia.json`, the
+`admin` and `auditor` slots resolve to the same wallet address. The
+same key that sets allocations also re-encrypts `claimedTotal`.
 
 **Why this is acceptable in v0.x**: The demo runs end-to-end with a
 single signer to keep the walkthrough video short and to avoid
