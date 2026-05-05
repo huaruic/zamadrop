@@ -1,36 +1,45 @@
 {
   "network": "sepolia",
   "chainId": 11155111,
-  "deployedAt": "2026-05-03T00:14:00Z",
-  "deployer": "0x0000000000000000000000000000000000000000",
+  "deployedAt": "2026-05-05T00:00:00Z",
+  "deployer": "0x81f19692e5C59a7D7DB7D0689843C213C9BFA260",
   "contracts": {
     "MockToken": {
-      "address": "0xE8d42a29c5f796A5E45f4806BB28205EC387A68C",
+      "address": "0x775e867541D348F022B3431209710B5BC02Ad29C",
       "name": "ZamaDrop Test Token",
       "symbol": "ZDT",
       "decimals": 0,
       "initialSupply": "1000",
-      "explorer": "https://sepolia.etherscan.io/address/0xE8d42a29c5f796A5E45f4806BB28205EC387A68C"
+      "explorer": "https://sepolia.etherscan.io/address/0x775e867541D348F022B3431209710B5BC02Ad29C"
     },
     "ZamaDropCampaign": {
-      "address": "0x30Af9a636B0284338B5D6CB1DE5DaE3407B6Ed93",
+      "address": "0xDAe72F548BFc37649c7Da24Cd0a2c90a73E6c5c1",
       "declaredTotal": "1000",
       "recipientCount": "2",
-      "auditor": "0x0000000000000000000000000000000000000000",
-      "token": "0xE8d42a29c5f796A5E45f4806BB28205EC387A68C",
-      "escrowTxHash": "0x4c8236274709246535dc8dbc3079baf9f6665e6391510264343ce417696c888e",
-      "explorer": "https://sepolia.etherscan.io/address/0x30Af9a636B0284338B5D6CB1DE5DaE3407B6Ed93"
+      "auditor": "0x81f19692e5C59a7D7DB7D0689843C213C9BFA260",
+      "token": "0x775e867541D348F022B3431209710B5BC02Ad29C",
+      "escrowTxHash": "0xc663a911cddfdc0818038586afe98a8316c66434d2f468020ceed972269be005",
+      "explorer": "https://sepolia.etherscan.io/address/0xDAe72F548BFc37649c7Da24Cd0a2c90a73E6c5c1",
+      "kmsHardened": true
     }
   },
   "frontend": {
-    "VITE_TOKEN_ADDRESS": "0xE8d42a29c5f796A5E45f4806BB28205EC387A68C",
-    "VITE_CAMPAIGN_ADDRESS": "0x30Af9a636B0284338B5D6CB1DE5DaE3407B6Ed93",
-    "VITE_ADMIN_ADDRESS": "0x0000000000000000000000000000000000000000",
-    "VITE_AUDITOR_ADDRESS": "0x0000000000000000000000000000000000000000"
+    "VITE_TOKEN_ADDRESS": "0x775e867541D348F022B3431209710B5BC02Ad29C",
+    "VITE_CAMPAIGN_ADDRESS": "0xDAe72F548BFc37649c7Da24Cd0a2c90a73E6c5c1",
+    "VITE_ADMIN_ADDRESS": "0x81f19692e5C59a7D7DB7D0689843C213C9BFA260",
+    "VITE_AUDITOR_ADDRESS": "0x81f19692e5C59a7D7DB7D0689843C213C9BFA260"
   },
   "previousDeployments": {
-    "note": "之前的部署使用了 decimals=18 默认值，导致 MetaMask 显示精度问题，已弃用",
-    "MockToken": "0x0Daa19d2924b434FBBC5e10d7348037DeF843680",
-    "ZamaDropCampaign": "0x2d885c691cEE007ddCE0D1b0d3fC43318B6F9D60"
+    "note": "MVP 版本（无 KMS 校验）已被 KMS-hardened 版本取代",
+    "v1": {
+      "MockToken": "0x0Daa19d2924b434FBBC5e10d7348037DeF843680",
+      "ZamaDropCampaign": "0x2d885c691cEE007ddCE0D1b0d3fC43318B6F9D60",
+      "note": "decimals=18 精度问题，废弃"
+    },
+    "v2": {
+      "MockToken": "0xE8d42a29c5f796A5E45f4806BB28205EC387A68C",
+      "ZamaDropCampaign": "0x30Af9a636B0284338B5D6CB1DE5DaE3407B6Ed93",
+      "note": "MVP 信任 caller 版本，已被 v3 (KMS-hardened) 取代"
+    }
   }
 }

@@ -142,11 +142,17 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
     }
 
     /**
-     * @notice 接收链下 publicDecrypt 的结果，翻转 finalized 标志。
-     *         在真实 Testnet 上，此函数应验证 KMS 签名；MVP 阶段接受任何调用者。
-     * @param result publicDecrypt 返回的 bool（true = 总量一致，可进入领取阶段）
+     * @notice 接收 KMS-signed publicDecrypt 结果，翻转 finalized 标志。
+     *         任何人可调用 —— 信任根是 Zama threshold KMS 的签名，不是 caller 身份。
+     *         详见 docs/security-notes.md §4。
+     * @param result          publicDecrypt 返回的 bool（true = 总量一致，可进入领取阶段）
+     * @param decryptionProof KMS threshold 签名的 proof（PublicDecryptResults.decryptionProof）
      */
-    function callbackFinalize(bool result) external {
+    function callbackFinalize(bool result, bytes calldata decryptionProof) external {
+        bytes32[] memory handles = new bytes32[](1);
+        handles[0] = finalizeCheckHandle;
+        FHE.checkSignatures(handles, abi.encode(result), decryptionProof);
+
         finalized = result;
         emit Finalized(result);
     }
@@ -196,13 +202,22 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
     // 链下 oracle：执行 token 转账
     // ─────────────────────────────────────────────
     /**
-     * @notice 链下 oracle 公开解密 pendingClaimHandle[user] 后调用此函数完成转账。
-     *         MVP 阶段：任何人可调用（信任链下 publicDecrypt 的诚实性）。
-     *         生产环境：应验证 KMS 签名 + amount 与 handle 解密结果一致。
+     * @notice 链下 executor 公开解密 pendingClaimHandle[user] 后调用此函数完成转账。
+     *         任何人可调用 —— 信任根是 Zama threshold KMS 的签名，不是 caller 身份。
+     *         FHE.checkSignatures revert 时整笔交易回滚，amount 必须与 handle 解密结果一致。
+     *         详见 docs/security-notes.md §4。
+     * @param user             受益人地址（claim 完毕等待转账的）
+     * @param amount           解密后的 allocation 金额
+     * @param decryptionProof  KMS threshold 签名的 proof（PublicDecryptResults.decryptionProof）
      */
-    function executeTransfer(address user, uint64 amount) external {
+    function executeTransfer(address user, uint64 amount, bytes calldata decryptionProof) external {
         if (!claimed[user]) revert NotClaimed();
         if (transferred[user]) revert AlreadyTransferred();
+
+        bytes32[] memory handles = new bytes32[](1);
+        handles[0] = pendingClaimHandle[user];
+        FHE.checkSignatures(handles, abi.encode(amount), decryptionProof);
+
         transferred[user] = true;
         require(token.transfer(user, amount), "token transfer failed");
         emit TokenTransferred(user, amount);

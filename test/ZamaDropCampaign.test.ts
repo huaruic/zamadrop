@@ -15,6 +15,22 @@ async function encryptAmount(
   return { handle: encrypted.handles[0], proof: encrypted.inputProof };
 }
 
+// publicDecrypt + KMS proof helper. KMS 改造后 callbackFinalize / executeTransfer
+// 需要 decryptionProof 参数；mock-utils 在 hardhat 环境下会自动生成有效签名。
+async function publicDecryptWithProof(handle: string): Promise<{
+  ebool: boolean;
+  euint: bigint;
+  decryptionProof: string;
+}> {
+  const result = await hre.fhevm.publicDecrypt([handle]);
+  const clear = result.clearValues[handle];
+  return {
+    ebool: clear as boolean,
+    euint: clear as bigint,
+    decryptionProof: result.decryptionProof,
+  };
+}
+
 describe("ZamaDropCampaign", function () {
   let contractAddress: string;
   let contract: Awaited<ReturnType<typeof ethers.getContractAt>>;
@@ -113,8 +129,8 @@ describe("ZamaDropCampaign", function () {
       // finalize
       await contract.connect(admin).finalize();
       const handle = await contract.finalizeCheckHandle();
-      const result = await hre.fhevm.publicDecryptEbool(handle);
-      await contract.connect(admin).callbackFinalize(result);
+      const { ebool: result, decryptionProof } = await publicDecryptWithProof(handle);
+      await contract.connect(admin).callbackFinalize(result, decryptionProof);
 
       // 尝试再设置
       const { handle: h3, proof: p3 } = await encryptAmount(contractAddress, admin.address, 100n);
@@ -136,10 +152,10 @@ describe("ZamaDropCampaign", function () {
 
       await contract.connect(admin).finalize();
       const handle = await contract.finalizeCheckHandle();
-      const result = await hre.fhevm.publicDecryptEbool(handle);
+      const { ebool: result, decryptionProof } = await publicDecryptWithProof(handle);
 
       expect(result).to.equal(true);
-      await contract.connect(admin).callbackFinalize(result);
+      await contract.connect(admin).callbackFinalize(result, decryptionProof);
       expect(await contract.finalized()).to.equal(true);
     });
 
@@ -150,10 +166,10 @@ describe("ZamaDropCampaign", function () {
 
       await contract.connect(admin).finalize();
       const handle = await contract.finalizeCheckHandle();
-      const result = await hre.fhevm.publicDecryptEbool(handle);
+      const { ebool: result, decryptionProof } = await publicDecryptWithProof(handle);
 
       expect(result).to.equal(false);
-      await contract.connect(admin).callbackFinalize(result);
+      await contract.connect(admin).callbackFinalize(result, decryptionProof);
       expect(await contract.finalized()).to.equal(false);
     });
 
@@ -163,7 +179,7 @@ describe("ZamaDropCampaign", function () {
       ).to.be.revertedWithCustomError(contract, "NotAdmin");
     });
 
-    it("MVP 假设下，非 Admin 也可调用 callbackFinalize", async function () {
+    it("KMS proof 校验下，任何账户都可提交 callbackFinalize（信任根是签名而非身份）", async function () {
       const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
       await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
       const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
@@ -171,10 +187,10 @@ describe("ZamaDropCampaign", function () {
 
       await contract.connect(admin).finalize();
       const handle = await contract.finalizeCheckHandle();
-      const result = await hre.fhevm.publicDecryptEbool(handle);
+      const { ebool: result, decryptionProof } = await publicDecryptWithProof(handle);
 
       await expect(
-        contract.connect(other).callbackFinalize(result)
+        contract.connect(other).callbackFinalize(result, decryptionProof)
       ).to.not.be.reverted;
       expect(await contract.finalized()).to.equal(true);
     });
@@ -193,8 +209,8 @@ describe("ZamaDropCampaign", function () {
 
       await contract.connect(admin).finalize();
       const handle = await contract.finalizeCheckHandle();
-      const result = await hre.fhevm.publicDecryptEbool(handle);
-      await contract.connect(admin).callbackFinalize(result);
+      const { ebool: result, decryptionProof } = await publicDecryptWithProof(handle);
+      await contract.connect(admin).callbackFinalize(result, decryptionProof);
     });
 
     it("受益人应能解密自己的 allocation", async function () {
@@ -241,8 +257,8 @@ describe("ZamaDropCampaign", function () {
 
       await contract.connect(admin).finalize();
       const handle = await contract.finalizeCheckHandle();
-      const result = await hre.fhevm.publicDecryptEbool(handle);
-      await contract.connect(admin).callbackFinalize(result);
+      const { ebool: result, decryptionProof } = await publicDecryptWithProof(handle);
+      await contract.connect(admin).callbackFinalize(result, decryptionProof);
     });
 
     it("受益人应能成功 claim 并更新 claimed 状态", async function () {
@@ -335,8 +351,8 @@ describe("ZamaDropCampaign", function () {
 
       await contract.connect(admin).finalize();
       const handle = await contract.finalizeCheckHandle();
-      const result = await hre.fhevm.publicDecryptEbool(handle);
-      await contract.connect(admin).callbackFinalize(result);
+      const { ebool: result, decryptionProof } = await publicDecryptWithProof(handle);
+      await contract.connect(admin).callbackFinalize(result, decryptionProof);
     });
 
     it("claim 应发出 ClaimRequested 事件并存储 pendingClaimHandle", async function () {
@@ -351,11 +367,15 @@ describe("ZamaDropCampaign", function () {
 
     it("executeTransfer 应成功转账并更新 transferred", async function () {
       await contract.connect(recipient1).claim();
+      const pending = await contract.pendingClaimHandle(recipient1.address);
+      const { decryptionProof } = await publicDecryptWithProof(pending);
 
       const balanceBefore = await tokenContract.balanceOf(recipient1.address);
       expect(balanceBefore).to.equal(0n);
 
-      await expect(contract.connect(other).executeTransfer(recipient1.address, ALLOC_1))
+      await expect(
+        contract.connect(other).executeTransfer(recipient1.address, ALLOC_1, decryptionProof)
+      )
         .to.emit(contract, "TokenTransferred")
         .withArgs(recipient1.address, ALLOC_1);
 
@@ -363,27 +383,45 @@ describe("ZamaDropCampaign", function () {
       expect(await tokenContract.balanceOf(recipient1.address)).to.equal(ALLOC_1);
     });
 
-    it("MVP 假设下，非 recipient 也可调用 executeTransfer", async function () {
+    it("KMS proof 校验下，任何账户都可提交 executeTransfer（信任根是签名而非身份）", async function () {
       await contract.connect(recipient1).claim();
+      const pending = await contract.pendingClaimHandle(recipient1.address);
+      const { decryptionProof } = await publicDecryptWithProof(pending);
 
       await expect(
-        contract.connect(other).executeTransfer(recipient1.address, ALLOC_1)
+        contract.connect(other).executeTransfer(recipient1.address, ALLOC_1, decryptionProof)
       ).to.not.be.reverted;
       expect(await contract.transferred(recipient1.address)).to.equal(true);
     });
 
-    it("未 claim 时调用 executeTransfer 应 revert", async function () {
+    it("amount 与 KMS 解密结果不一致时应 revert（防伪造）", async function () {
+      await contract.connect(recipient1).claim();
+      const pending = await contract.pendingClaimHandle(recipient1.address);
+      const { decryptionProof } = await publicDecryptWithProof(pending);
+
+      // ALLOC_1 是 600，攻击者尝试虚报 9999
       await expect(
-        contract.connect(other).executeTransfer(recipient2.address, ALLOC_2)
+        contract.connect(other).executeTransfer(recipient1.address, 9999n, decryptionProof)
+      ).to.be.reverted;
+      expect(await contract.transferred(recipient1.address)).to.equal(false);
+    });
+
+    it("未 claim 时调用 executeTransfer 应 revert", async function () {
+      // pendingClaimHandle[recipient2] 仍为 0，但 NotClaimed 在 checkSignatures 之前先 revert
+      await expect(
+        contract.connect(other).executeTransfer(recipient2.address, ALLOC_2, "0x")
       ).to.be.revertedWithCustomError(contract, "NotClaimed");
     });
 
     it("重复 executeTransfer 应 revert", async function () {
       await contract.connect(recipient1).claim();
-      await contract.connect(other).executeTransfer(recipient1.address, ALLOC_1);
+      const pending = await contract.pendingClaimHandle(recipient1.address);
+      const { decryptionProof } = await publicDecryptWithProof(pending);
+      await contract.connect(other).executeTransfer(recipient1.address, ALLOC_1, decryptionProof);
 
+      // 第二次调用：AlreadyTransferred 在 checkSignatures 之前先 revert
       await expect(
-        contract.connect(other).executeTransfer(recipient1.address, ALLOC_1)
+        contract.connect(other).executeTransfer(recipient1.address, ALLOC_1, "0x")
       ).to.be.revertedWithCustomError(contract, "AlreadyTransferred");
     });
 
