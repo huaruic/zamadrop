@@ -1,5 +1,7 @@
 # Task Admin Tab
 
+> ⚠️ **SUPERSEDED** (2026-05-06) — 本任务描述的 `frontend/src/tabs/AdminTab.tsx` 与 `callbackFinalize` 由前端触发的设计已被替换。当前实现：[`frontend/src/pages/admin/AdminPage.tsx`](../../../frontend/src/pages/admin/AdminPage.tsx) + `SetAllocationForm.tsx` + `AllocationLedger.tsx` + `FinalizePanel.tsx`。`callbackFinalize` 不再由前端触发，由 [`scripts/executor.ts`](../../../scripts/executor.ts) 通过 KMS 公开解密自动结算。Admin 页只负责 `setAllocation` + `finalize`。当前协议见 [`docs/role-page-protocol.md`](../../../docs/role-page-protocol.md) §4.2。
+
 ## Goal
 实现 `frontend/src/tabs/AdminTab.tsx` —— Admin 视图，支持设置 allocation、finalize、提交 callback。
 

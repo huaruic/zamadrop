@@ -33,5 +33,6 @@ Merkle proof / vesting / factory / ERC7984（stretch） / 跨链 / KYC
 
 ## 信任假设
 
-详见 [`docs/trust-model.md`](./docs/trust-model.md)。`callbackFinalize` 与
-`executeTransfer` 在 v0.x 是无权限校验的，已编码为合约测试。
+详见 [`docs/SECURITY.md`](./docs/SECURITY.md)。`callbackFinalize` 与
+`executeTransfer` 通过 `FHE.checkSignatures` 校验 KMS threshold 签名，
+任何账户都可调但伪造 amount / bool 会 revert。

@@ -74,18 +74,6 @@ The final submission must include: a dApp that runs the full four-role flow end-
 
 ---
 
-## 8. Landing Page Visual Specification
+## 8. Landing Page
 
-The Landing Page is locked at **v2 final**. The detailed specification lives in [`docs/landing-page-spec.md`](./landing-page-spec.md), and the prototype is preserved at [`docs/index_v2.html`](./index_v2.html) as a visual reference. **Any Landing Page visual or copy change must be made in the spec document first**, then synced to `frontend/src/pages/LandingPage.tsx`.
-
-**Key points**:
-
-- **Design tone**: cream background plus gold-brown accent (`oklch(63% 0.17 83)`), low saturation, protocol-grade professional feel, with a flowing orb background.
-- **Supports Light + Dark dual themes** and **EN + Chinese bilingual content**, switched via `<html data-theme>` / `<html lang>` and persisted in `localStorage`.
-- **Information architecture (fixed order)**: Hero → Trust signals (3 stats) → Problem vs Solution → Flow (3 steps) → Product preview (3 mock UIs) → Final CTA → Footer.
-- **Slogan placements**: Hero headline (first instance) and Footer slogan (second instance), satisfying the slogan-repetition requirement outside of the video.
-- **No wallet connection**: the Landing Page is a marketing surface; all CTAs route to `/campaign`, which then dispatches to the four role tabs.
-- **No new dependencies**: i18n and theme are implemented in under 60 lines using `useState + localStorage`—no i18next, next-themes, or framer-motion.
-- **Responsive breakpoints**: 1040px (grid collapses to a single column) / 780px (header collapses).
-
-Implementation location: `frontend/src/pages/LandingPage.tsx`; token configuration: the `@theme` block in `frontend/src/index.css`.
+The Landing Page has moved to a separate repository `secret-drop` as a marketing surface (no wallet connection; CTAs link to the `app.zamadrop.xyz` subdomain). The dApp repository no longer maintains landing visual specifications; design tokens are shared via `frontend/src/styles/tokens.css` and `frontend/src/styles/effects.css`, keeping the dApp's visual language aligned with the landing site.

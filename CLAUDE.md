@@ -19,9 +19,8 @@ For full product context see [`README.md`](./README.md) and
 - **Contracts**: Solidity ^0.8.24, `@fhevm/solidity` ^0.11.1
 - **Toolchain**: Hardhat ^2.28.4, TypeScript
 - **FHE testing**: `@fhevm/mock-utils` ^0.4.2, `@fhevm/hardhat-plugin` ^0.4.2
-- **Frontend**: Vite + React 19, wagmi v3, `@zama-fhe/relayer-sdk` ^0.4.2
-- **E2E**: Playwright + Synpress (real MetaMask)
-- **Node.js**: ≥ 20
+- **Frontend**: Vite + React 19, wagmi v3, `@zama-fhe/relayer-sdk` ^0.4.2, shadcn/ui
+- **Node.js**: ≥ 20 (frontend also supports bun)
 
 ## FHE API — must use `FHE.xxx`, not legacy `TFHE.xxx`
 
@@ -45,7 +44,7 @@ FHE.allowForDecryption(handle); // allow Gateway public decrypt
 - Roles: `Admin` / `Recipient` / `Auditor` / `Public` + off-chain
   `Executor` (system) — see [`docs/role-page-protocol.md`](./docs/role-page-protocol.md)
 - State machine: `Setup → Finalized → Claiming`
-- Trust assumptions: see [`docs/trust-model.md`](./docs/trust-model.md)
+- Trust assumptions: see [`docs/SECURITY.md`](./docs/SECURITY.md)
 
 ## Verification Commands
 
@@ -55,8 +54,8 @@ npm test               # Hardhat tests with fhEVM mock
 npm run coverage       # coverage report
 npm run lint           # lint TS + Solidity
 
-# Frontend
-cd frontend && npm install
+# Frontend (supports npm or bun)
+cd frontend && npm install   # or: bun install
 npm run dev            # Vite dev server on 5173
 npm run build          # tsc -b + vite build
 npm run lint

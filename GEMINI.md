@@ -62,6 +62,7 @@ auditor wallet addresses anywhere in source.
 
 ## Trust Assumptions
 
-See [`docs/trust-model.md`](./docs/trust-model.md). The v0.x release
-intentionally leaves `callbackFinalize` and `executeTransfer` open to
-any caller; both are pinned as contract tests.
+See [`docs/SECURITY.md`](./docs/SECURITY.md). `callbackFinalize` and
+`executeTransfer` are permissionless callers but verify Zama KMS threshold
+signatures via `FHE.checkSignatures` before mutating state. Trust root is
+the KMS signature, not the caller.

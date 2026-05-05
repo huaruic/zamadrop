@@ -1,5 +1,7 @@
 # Task Auditor Tab
 
+> ⚠️ **SUPERSEDED** (2026-05-06) — 本任务描述的 `frontend/src/tabs/AuditorTab.tsx` "守卫即门禁"设计已被 V6 IA 替换。当前实现：[`frontend/src/pages/auditor/AuditorPage.tsx`](../../../frontend/src/pages/auditor/AuditorPage.tsx) + `AggregateCard.tsx` + `ComplianceCard.tsx` + `ClaimsActivity.tsx`。关键差异：preview 模式（未连钱包 OR 非 auditor）不再"只显示 guard"，而是同时渲染 `ComplianceCard` + `ClaimsActivity` —— 合规边界说明本身就是 ZamaDrop 的卖点，必须对所有访客可见。`AggregateCard` 因为依赖 `msg.sender` 的 view 调用，仅在 auditor 钱包时渲染。当前协议见 [`docs/role-page-protocol.md`](../../../docs/role-page-protocol.md) §4.4。
+
 ## Goal
 实现 `frontend/src/tabs/AuditorTab.tsx` —— 审计员视图：通过 user re-encryption 解密 `claimedTotal` 聚合值，证明"可编程合规"——监管能拿到聚合数字但拿不到任何个人金额。
 

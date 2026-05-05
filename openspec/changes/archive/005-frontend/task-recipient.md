@@ -1,5 +1,7 @@
 # Task Recipient Tab
 
+> ⚠️ **SUPERSEDED** (2026-05-06) — 本任务描述的 `frontend/src/tabs/RecipientTab.tsx` 与 `executeTransfer` 由前端触发的设计已被替换。当前实现：[`frontend/src/pages/recipient/RecipientPage.tsx`](../../../frontend/src/pages/recipient/RecipientPage.tsx) + `AllocationCard.tsx` + `ClaimStepper.tsx` + `BalancePanel.tsx`。`executeTransfer` 不再由前端触发，由 [`scripts/executor.ts`](../../../scripts/executor.ts) 通过 KMS 公开解密自动结算。Recipient 页只负责 user-decrypt + `claim`。`useUserDecryptEuint64` hook 见 [`frontend/src/hooks/useUserDecryptEuint64.ts`](../../../frontend/src/hooks/useUserDecryptEuint64.ts)。当前协议见 [`docs/role-page-protocol.md`](../../../docs/role-page-protocol.md) §4.3。
+
 ## Goal
 实现 `frontend/src/tabs/RecipientTab.tsx` —— 受益人视图：通过 user re-encryption 看自己的加密 allocation、claim、解密 pendingHandle、执行 token transfer 拿到 ZDT。
 
