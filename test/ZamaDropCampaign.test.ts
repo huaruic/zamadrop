@@ -162,6 +162,22 @@ describe("ZamaDropCampaign", function () {
         contract.connect(other).finalize()
       ).to.be.revertedWithCustomError(contract, "NotAdmin");
     });
+
+    it("MVP 假设下，非 Admin 也可调用 callbackFinalize", async function () {
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await contract.connect(admin).finalize();
+      const handle = await contract.finalizeCheckHandle();
+      const result = await hre.fhevm.publicDecryptEbool(handle);
+
+      await expect(
+        contract.connect(other).callbackFinalize(result)
+      ).to.not.be.reverted;
+      expect(await contract.finalized()).to.equal(true);
+    });
   });
 
   // ─────────────────────────────────────────────
@@ -345,6 +361,15 @@ describe("ZamaDropCampaign", function () {
 
       expect(await contract.transferred(recipient1.address)).to.equal(true);
       expect(await tokenContract.balanceOf(recipient1.address)).to.equal(ALLOC_1);
+    });
+
+    it("MVP 假设下，非 recipient 也可调用 executeTransfer", async function () {
+      await contract.connect(recipient1).claim();
+
+      await expect(
+        contract.connect(other).executeTransfer(recipient1.address, ALLOC_1)
+      ).to.not.be.reverted;
+      expect(await contract.transferred(recipient1.address)).to.equal(true);
     });
 
     it("未 claim 时调用 executeTransfer 应 revert", async function () {
