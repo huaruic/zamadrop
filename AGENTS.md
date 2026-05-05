@@ -31,6 +31,7 @@ npm run lint
 
 Merkle proof / vesting / factory / ERC7984（stretch） / 跨链 / KYC
 
-## 设计文档
+## 信任假设
 
-`~/.gstack/projects/zamaDrop/internal-design-note.md`
+详见 [`docs/trust-model.md`](./docs/trust-model.md)。`callbackFinalize` 与
+`executeTransfer` 在 v0.x 是无权限校验的，已编码为合约测试。
