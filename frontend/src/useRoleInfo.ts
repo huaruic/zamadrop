@@ -6,32 +6,35 @@ function sameAddress(a?: string, b?: string) {
   return !!a && !!b && a.toLowerCase() === b.toLowerCase();
 }
 
-export function useRoleInfo(address?: `0x${string}`) {
+export function useRoleInfo(
+  walletAddress?: `0x${string}`,
+  campaignAddress: `0x${string}` = CONTRACTS.campaign,
+) {
   const { data: adminAddress } = useReadContract({
     abi: CAMPAIGN_ABI,
-    address: CONTRACTS.campaign,
+    address: campaignAddress,
     functionName: "admin",
   });
 
   const { data: auditorAddress } = useReadContract({
     abi: CAMPAIGN_ABI,
-    address: CONTRACTS.campaign,
+    address: campaignAddress,
     functionName: "auditor",
   });
 
   const { data: allocationSet } = useReadContract({
     abi: CAMPAIGN_ABI,
-    address: CONTRACTS.campaign,
+    address: campaignAddress,
     functionName: "allocationSet",
-    args: address ? [address] : undefined,
-    query: { enabled: !!address },
+    args: walletAddress ? [walletAddress] : undefined,
+    query: { enabled: !!walletAddress },
   });
 
   const resolvedAdmin = adminAddress as `0x${string}` | undefined;
   const resolvedAuditor = auditorAddress as `0x${string}` | undefined;
 
-  const isAdmin = sameAddress(address, resolvedAdmin);
-  const isAuditor = sameAddress(address, resolvedAuditor);
+  const isAdmin = sameAddress(walletAddress, resolvedAdmin);
+  const isAuditor = sameAddress(walletAddress, resolvedAuditor);
   const isRecipient = allocationSet === true;
 
   const roleLabels = [

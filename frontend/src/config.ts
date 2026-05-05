@@ -6,9 +6,21 @@
 export const SEPOLIA_CHAIN_ID = 11155111;
 
 export const CONTRACTS = {
-  token: "0xE8d42a29c5f796A5E45f4806BB28205EC387A68C" as const,
-  campaign: "0x30Af9a636B0284338B5D6CB1DE5DaE3407B6Ed93" as const,
+  token: "0x775e867541D348F022B3431209710B5BC02Ad29C" as const,
+  campaign: "0xDAe72F548BFc37649c7Da24Cd0a2c90a73E6c5c1" as const,
 };
+
+/** Public registry of campaigns shown on the home page.
+ * `VITE_CAMPAIGN_ADDRESS` overrides the hardcoded list when set — useful for
+ * fresh-state E2E or when redeploying the contract during a hackathon push.
+ * If unset, falls back to `CONTRACTS.campaign`. */
+const envCampaign = import.meta.env.VITE_CAMPAIGN_ADDRESS as
+  | `0x${string}`
+  | undefined;
+
+export const CAMPAIGNS: readonly `0x${string}`[] = envCampaign
+  ? [envCampaign]
+  : [CONTRACTS.campaign];
 
 export const ETHERSCAN_BASE = "https://sepolia.etherscan.io";
 export const SEPOLIA_RPC = "https://ethereum-sepolia.publicnode.com";

@@ -24,10 +24,11 @@ export const CAMPAIGN_ABI = [
   { type: "function", name: "setAllocation", stateMutability: "nonpayable",
     inputs: [{ type: "address", name: "recipient" }, { type: "bytes32", name: "encAmount" }, { type: "bytes", name: "inputProof" }], outputs: [] },
   { type: "function", name: "finalize", stateMutability: "nonpayable", inputs: [], outputs: [] },
-  { type: "function", name: "callbackFinalize", stateMutability: "nonpayable", inputs: [{ type: "bool", name: "result" }], outputs: [] },
+  { type: "function", name: "callbackFinalize", stateMutability: "nonpayable",
+    inputs: [{ type: "bool", name: "result" }, { type: "bytes", name: "decryptionProof" }], outputs: [] },
   { type: "function", name: "claim", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "executeTransfer", stateMutability: "nonpayable",
-    inputs: [{ type: "address", name: "user" }, { type: "uint64", name: "amount" }], outputs: [] },
+    inputs: [{ type: "address", name: "user" }, { type: "uint64", name: "amount" }, { type: "bytes", name: "decryptionProof" }], outputs: [] },
 
   // 事件
   { type: "event", name: "AllocationSet", inputs: [{ type: "address", indexed: true, name: "recipient" }] },

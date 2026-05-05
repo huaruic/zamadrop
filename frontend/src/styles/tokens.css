@@ -1,0 +1,60 @@
+/* ZamaDrop design tokens — single source of truth.
+ * Shared between the marketing landing page and the dApp.
+ * Values are HSL channels (no `hsl()` wrapper) so they compose with
+ * Tailwind v3 (`hsl(var(--primary))`) and Tailwind v4 (`@theme`) alike. */
+
+:root {
+  /* shadcn / semantic surface */
+  --background: 240 8% 4%;
+  --foreground: 0 0% 98%;
+
+  --card: 240 8% 6%;
+  --card-foreground: 0 0% 98%;
+
+  --popover: 240 8% 6%;
+  --popover-foreground: 0 0% 98%;
+
+  --primary: 51 100% 50%;
+  --primary-foreground: 240 10% 4%;
+
+  --secondary: 240 6% 12%;
+  --secondary-foreground: 0 0% 98%;
+
+  --muted: 240 6% 10%;
+  --muted-foreground: 240 5% 60%;
+
+  --accent: 51 100% 50%;
+  --accent-foreground: 240 10% 4%;
+
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+
+  --border: 240 6% 14%;
+  --input: 240 6% 14%;
+  --ring: 51 100% 50%;
+
+  --radius: 0.75rem;
+
+  /* ZamaDrop brand tokens */
+  --surface: 240 8% 7%;
+  --surface-elevated: 240 7% 10%;
+  --cipher: 280 60% 65%;
+  --danger: 0 75% 60%;
+
+  --gradient-glow: radial-gradient(circle at 50% 0%, hsl(51 100% 50% / 0.18), transparent 60%);
+  --gradient-card: linear-gradient(180deg, hsl(240 8% 8%), hsl(240 8% 5%));
+  --shadow-glow: 0 0 60px -10px hsl(51 100% 50% / 0.35);
+  --shadow-card: 0 10px 40px -20px hsl(0 0% 0% / 0.6);
+
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* shadcn sidebar */
+  --sidebar-background: 240 8% 4%;
+  --sidebar-foreground: 0 0% 98%;
+  --sidebar-primary: 51 100% 50%;
+  --sidebar-primary-foreground: 240 10% 4%;
+  --sidebar-accent: 240 6% 12%;
+  --sidebar-accent-foreground: 0 0% 98%;
+  --sidebar-border: 240 6% 14%;
+  --sidebar-ring: 51 100% 50%;
+}

@@ -1,106 +1,68 @@
 @import "tailwindcss";
+@import "./styles/tokens.css";
+@import "./styles/effects.css";
 
+/* Bridge HSL channel tokens → Tailwind v4 color utilities.
+ * Channel form (e.g. `51 100% 50%`) lives in tokens.css; here we wrap with
+ * hsl() so `bg-primary`, `text-cipher`, `border-border` etc. work. */
 @theme {
-  /* Existing dApp tokens (PublicTab / AdminTab / AuditorTab / RecipientTab depend on these — do not rename) */
-  --color-background: #f7f5f0;
-  --color-surface: #fffdfa;
-  --color-surface-alt: #f5f1e8;
-  --color-border: #ded7ca;
-  --color-border-subtle: #ece5d8;
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
 
-  --color-text-primary: #111111;
-  --color-text-secondary: #5d5a53;
-  --color-text-muted: #7a746b;
-  --color-text-protocol: #6a655d;
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
 
-  --color-accent: #8a6700;
-  --color-accent-hover: #6e5200;
-  --color-accent-soft: #f5e8a7;
-  --color-accent-soft-text: #6b5600;
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
 
-  --color-success: #166534;
-  --color-success-bg: #f0fdf4;
-  --color-warning: #92400e;
-  --color-warning-bg: #fffbeb;
-  --color-error: #991b1b;
-  --color-error-bg: #fef2f2;
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
 
-  /* Landing Page v2 tokens (oklch-based, tuned to Zama brand yellow) */
-  --color-lp-bg: oklch(98.7% 0.008 84);
-  --color-lp-surface: oklch(100% 0 0 / 0.74);
-  --color-lp-surface-strong: oklch(97.2% 0.009 84);
-  --color-lp-fg: oklch(20% 0.02 250);
-  --color-lp-muted: oklch(48% 0.015 250);
-  --color-lp-border: oklch(88% 0.012 250 / 0.9);
-  --color-lp-accent: oklch(86% 0.18 92); /* Zama Yellow inspired: #fdd10b */
-  --color-lp-accent-soft: oklch(94% 0.06 92 / 0.72);
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
 
-  --shadow-lp: 0 20px 50px oklch(30% 0.02 250 / 0.06);
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
 
-  --color-lp-glow-a: oklch(88% 0.14 92 / 0.18); /* Yellow glow */
-  --color-lp-glow-b: oklch(62% 0.11 205 / 0.12);
-  --color-lp-glow-c: oklch(68% 0.11 150 / 0.1);
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
 
-  --font-lp-display:
-    "Telegraf", "Suisse Intl", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-lp-body:
-    "Telegraf", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-lp-mono:
-    "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
 
-  --radius-lp: 18px;
-  --radius-lp-sm: 12px;
-  --container-lp: 1180px;
-  --header-lp-height: 78px;
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --color-surface: hsl(var(--surface));
+  --color-surface-elevated: hsl(var(--surface-elevated));
+  --color-cipher: hsl(var(--cipher));
+  --color-danger: hsl(var(--danger));
+
+  --font-mono: var(--font-mono);
+  --radius: var(--radius);
 }
 
-/* Dark theme override — applied only while LandingPage is mounted (it sets/unsets <html data-theme>) */
-html[data-theme="dark"] {
-  --color-lp-bg: oklch(16% 0.022 255);
-  --color-lp-surface: oklch(22% 0.018 255 / 0.62);
-  --color-lp-surface-strong: oklch(24% 0.018 255);
-  --color-lp-fg: oklch(96% 0.006 95);
-  --color-lp-muted: oklch(73% 0.014 245);
-  --color-lp-border: oklch(34% 0.018 245 / 0.86);
-  --color-lp-accent: oklch(77% 0.16 86);
-  --color-lp-accent-soft: oklch(33% 0.055 85 / 0.56);
-
-  --shadow-lp: 0 24px 90px oklch(6% 0.01 250 / 0.46);
-
-  --color-lp-glow-a: oklch(75% 0.14 85 / 0.18);
-  --color-lp-glow-b: oklch(60% 0.13 225 / 0.22);
-  --color-lp-glow-c: oklch(64% 0.13 165 / 0.16);
-
+html {
   color-scheme: dark;
-}
-
-:root {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  color-scheme: light;
+  scroll-behavior: smooth;
 }
 
 body {
   margin: 0;
-  background-color: var(--color-background);
-  color: var(--color-text-primary);
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--font-mono);
   -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "cv11";
 }
 
 #root {
   min-height: 100vh;
 }
 
-/* LandingPage uses its own background (flushes the dApp body bg) */
-body:has([data-lp-root]) {
-  background-color: var(--color-lp-bg);
-  color: var(--color-lp-fg);
-  font-family: var(--font-lp-body);
-}
-
-/* Reduced motion: stop orb drift in LandingPage */
 @media (prefers-reduced-motion: reduce) {
-  [data-lp-root] * {
-    animation: none !important;
-    transition: none !important;
+  html {
+    scroll-behavior: auto;
   }
 }
