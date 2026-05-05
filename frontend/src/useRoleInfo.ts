@@ -1,10 +1,6 @@
 import { useReadContract } from "wagmi";
 import { CAMPAIGN_ABI } from "./abis";
-import {
-  ADMIN_ADDRESS,
-  AUDITOR_ADDRESS,
-  CONTRACTS,
-} from "./config";
+import { CONTRACTS } from "./config";
 
 function sameAddress(a?: string, b?: string) {
   return !!a && !!b && a.toLowerCase() === b.toLowerCase();
@@ -31,9 +27,8 @@ export function useRoleInfo(address?: `0x${string}`) {
     query: { enabled: !!address },
   });
 
-  const resolvedAdmin = (adminAddress as `0x${string}` | undefined) ?? ADMIN_ADDRESS;
-  const resolvedAuditor =
-    (auditorAddress as `0x${string}` | undefined) ?? AUDITOR_ADDRESS;
+  const resolvedAdmin = adminAddress as `0x${string}` | undefined;
+  const resolvedAuditor = auditorAddress as `0x${string}` | undefined;
 
   const isAdmin = sameAddress(address, resolvedAdmin);
   const isAuditor = sameAddress(address, resolvedAuditor);
