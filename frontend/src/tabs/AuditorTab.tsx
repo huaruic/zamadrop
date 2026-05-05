@@ -1,15 +1,14 @@
 import { useState } from "react";
 import { useAccount, useReadContract, useWalletClient } from "wagmi";
 import { CAMPAIGN_ABI } from "../abis";
-import { CONTRACTS, AUDITOR_ADDRESS } from "../config";
+import { CONTRACTS } from "../config";
 import { userDecryptEuint64 } from "../fhevm";
+import { useRoleInfo } from "../useRoleInfo";
 
 export function AuditorTab() {
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
-
-  const isAuditor =
-    !!address && address.toLowerCase() === AUDITOR_ADDRESS.toLowerCase();
+  const { isAuditor, auditorAddress } = useRoleInfo(address);
 
   // 仅 auditor 钱包查询不会 revert，其他钱包跳过
   const { data: handle, isLoading: handleLoading } = useReadContract({
@@ -29,21 +28,27 @@ export function AuditorTab() {
     if (!handle || !walletClient || !address) return;
     setError(null);
     setDecrypting(true);
+    setStage("Loading FHE SDK...");
     try {
-      setStage("Awaiting signature...");
       const signer = {
         address,
-        signTypedData: async (params: any) => {
-          // 第一次 signTypedData 时把 stage 切到 "Decrypting via KMS..."
-          const sig = await walletClient.signTypedData(params);
-          setStage("Decrypting via KMS...");
-          return sig;
-        },
+        signTypedData: (params: any) => walletClient.signTypedData(params),
       };
       const value = await userDecryptEuint64(
         handle as `0x${string}`,
         CONTRACTS.campaign,
         signer,
+        (s) => {
+          setStage(
+            s === "sdk"
+              ? "Loading FHE SDK..."
+              : s === "keypair"
+                ? "Generating keypair..."
+                : s === "signing"
+                  ? "Awaiting wallet signature..."
+                  : "Decrypting via KMS...",
+          );
+        },
       );
       setAggregate(value);
     } catch (e: any) {
@@ -74,7 +79,7 @@ export function AuditorTab() {
           <div className="mt-2 text-xs text-zinc-500">
             Expected:{" "}
             <span className="font-mono text-zinc-400">
-              {AUDITOR_ADDRESS}
+              {auditorAddress}
             </span>
           </div>
         </div>
@@ -111,7 +116,10 @@ export function AuditorTab() {
         {aggregate !== null ? (
           <div className="pt-2">
             <div className="text-xs text-zinc-500 mb-1">Decrypted aggregate</div>
-            <div className="text-5xl font-bold text-white">
+            <div
+              className="text-5xl font-bold text-white"
+              data-testid="auditor-decrypted-aggregate"
+            >
               {aggregate.toString()}
               <span className="ml-3 text-xl text-purple-400 font-normal">
                 ZDT
@@ -121,6 +129,7 @@ export function AuditorTab() {
         ) : (
           <button
             onClick={handleDecrypt}
+            data-testid="auditor-decrypt-button"
             disabled={!handle || decrypting}
             className="px-4 py-2 rounded bg-purple-600 hover:bg-purple-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white font-medium text-sm"
           >

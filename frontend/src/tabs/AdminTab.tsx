@@ -6,14 +6,15 @@ import {
   useWaitForTransactionReceipt,
 } from "wagmi";
 import { CAMPAIGN_ABI } from "../abis";
-import { ADMIN_ADDRESS, CONTRACTS, ETHERSCAN_BASE } from "../config";
+import { CONTRACTS, ETHERSCAN_BASE } from "../config";
 import { encryptUint64, publicDecryptEbool } from "../fhevm";
+import { useRoleInfo } from "../useRoleInfo";
 
 type FinalizeStep = "idle" | "submit" | "wait-tx" | "decrypt" | "callback" | "wait-cb" | "done";
 
 export function AdminTab() {
   const { address } = useAccount();
-  const isAdmin = address?.toLowerCase() === ADMIN_ADDRESS.toLowerCase();
+  const { isAdmin, adminAddress } = useRoleInfo(address);
 
   const { data: declaredTotal, refetch: refetchDeclared } = useReadContract({
     abi: CAMPAIGN_ABI,
@@ -31,17 +32,8 @@ export function AdminTab() {
     functionName: "finalized",
   });
 
-  if (!address) {
-    return (
-      <Guard message="Connect your wallet to use the Admin view." />
-    );
-  }
-  if (!isAdmin) {
-    return (
-      <Guard message="Connect with admin wallet to use this view." />
-    );
-  }
-
+  // 第一性原理：状态预览是 public read-only，不应强制连钱包。
+  // 写操作（SetAllocation / Finalize）才需要 admin 钱包，未满足时显示内嵌提示而非整体守卫。
   return (
     <div className="space-y-6">
       <div>
@@ -61,23 +53,59 @@ export function AdminTab() {
         />
       </div>
 
-      <SetAllocationCard
-        adminAddress={address}
-        disabled={finalized === true}
-        onSuccess={() => {
-          refetchCount();
-          refetchDeclared();
-        }}
-      />
+      {!address && (
+        <InlineNotice tone="info">
+          连接 admin 钱包后可设置 allocation 和触发 finalize。
+          <div className="text-xs text-zinc-500 mt-1">
+            Admin: <span className="font-mono">{adminAddress}</span>
+          </div>
+        </InlineNotice>
+      )}
 
-      <FinalizeCard
-        finalized={finalized === true}
-        onDone={() => {
-          refetchFinalized();
-          refetchDeclared();
-        }}
-      />
+      {address && !isAdmin && (
+        <InlineNotice tone="warn">
+          当前钱包不是 admin，无法执行写操作。请切换到 admin 钱包：
+          <span className="font-mono ml-1">{adminAddress}</span>
+        </InlineNotice>
+      )}
+
+      {address && isAdmin && (
+        <>
+          <SetAllocationCard
+            adminAddress={address}
+            disabled={finalized === true}
+            onSuccess={() => {
+              refetchCount();
+              refetchDeclared();
+            }}
+          />
+
+          <FinalizeCard
+            finalized={finalized === true}
+            onDone={() => {
+              refetchFinalized();
+              refetchDeclared();
+            }}
+          />
+        </>
+      )}
     </div>
+  );
+}
+
+function InlineNotice({
+  tone,
+  children,
+}: {
+  tone: "info" | "warn";
+  children: React.ReactNode;
+}) {
+  const cls =
+    tone === "warn"
+      ? "border-amber-900/50 bg-amber-950/20 text-amber-200"
+      : "border-zinc-800 bg-zinc-900/50 text-zinc-300";
+  return (
+    <div className={`rounded-lg border ${cls} p-4 text-sm`}>{children}</div>
   );
 }
 
@@ -396,17 +424,6 @@ function TxLink({ label, hash }: { label: string; hash: `0x${string}` }) {
       >
         {hash.slice(0, 10)}…{hash.slice(-8)} ↗
       </a>
-    </div>
-  );
-}
-
-function Guard({ message }: { message: string }) {
-  return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-6 text-center">
-      <div className="text-zinc-300">{message}</div>
-      <div className="text-xs text-zinc-500 mt-2">
-        Admin: <span className="font-mono">{ADMIN_ADDRESS}</span>
-      </div>
     </div>
   );
 }
