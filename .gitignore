@@ -5,6 +5,18 @@ types/
 dist/
 .env
 .env.local
+.env.e2e
 coverage/
 coverage.json
 fhevmTemp/
+.cache-synpress/
+frontend/playwright-report/
+frontend/test-results/
+
+# Local-only working notes (never published)
+.private/
+
+# Per-user agent state directories (each user's local Claude / Codex / Gemini config)
+.claude/
+.codex/
+.gemini/
