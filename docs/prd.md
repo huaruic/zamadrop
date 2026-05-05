@@ -70,3 +70,21 @@ MVP 不包括的功能包括 vesting 线性解锁、Merkle proof 资格验证、
 ## 7. 提交清单
 
 最终提交需包含可在测试网完整跑通四视角的 dApp、公开 GitHub 代码仓库、清晰的 README(含架构图、合约地址、部署步骤、技术亮点说明)、2 分钟真人出镜视频、中英双语字幕。视频中 slogan **"Private allocations. Public accountability."** 必须出现至少两次,auditor 视图必须至少出现 5 秒,所有旁白必须真人录制,**禁止任何 AI 合成语音或虚拟形象**。
+
+---
+
+## 8. Landing Page 视觉规范
+
+Landing Page 已锁定 **v2 终稿**，详细规范见 [`docs/landing-page-spec.md`](./landing-page-spec.md)，原型保留在 [`docs/index_v2.html`](./index_v2.html) 作为视觉参考。**任何 Landing Page 视觉/文案变更必须先改 spec 文档**，再同步到 `frontend/src/pages/LandingPage.tsx`。
+
+**核心要点**：
+
+- **设计基调**：奶油底 + 金棕 accent（`oklch(63% 0.17 83)`），低饱和、协议级专业感、流动 orb 背景。
+- **支持 Light + Dark 双主题** 与 **EN + 中文 双语**，由 `<html data-theme>` / `<html lang>` 切换，状态写入 `localStorage`。
+- **信息架构（顺序固定）**：Hero → Trust signals (3 stat) → Problem vs Solution → Flow (3 step) → Product preview (3 mock UI) → Final CTA → Footer。
+- **slogan 出现位置**：Hero 大标题（第一处）+ Footer slogan（第二处），满足视频以外的 slogan 复述要求。
+- **不接钱包**：Landing Page 是营销层，所有 CTA 引导到 `/campaign`，由那里再分流到四个角色 tab。
+- **不引入新依赖**：i18n 与 theme 用 `useState + localStorage` 60 行内实现，不装 i18next / next-themes / framer-motion。
+- **响应式断点**：1040px（grid 折单列）/ 780px（header 折叠）。
+
+实现位置：`frontend/src/pages/LandingPage.tsx`；token 配置：`frontend/src/index.css` 的 `@theme` 块。

@@ -1,0 +1,1345 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ZamaDrop | Private allocations. Public accountability.</title>
+  <style>
+    :root {
+      --bg: oklch(98.7% 0.008 84);
+      --surface: oklch(100% 0 0 / 0.74);
+      --surface-strong: oklch(97.2% 0.009 84);
+      --fg: oklch(20% 0.02 250);
+      --muted: oklch(48% 0.015 250);
+      --border: oklch(88% 0.012 250 / 0.9);
+      --accent: oklch(63% 0.17 83);
+      --accent-soft: oklch(93% 0.04 83 / 0.72);
+      --shadow: 0 20px 50px oklch(30% 0.02 250 / 0.08);
+      --hero-glow-a: oklch(76% 0.13 84 / 0.22);
+      --hero-glow-b: oklch(62% 0.11 205 / 0.16);
+      --hero-glow-c: oklch(68% 0.11 150 / 0.14);
+      --font-display: "Telegraf", "Suisse Intl", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      --font-body: "Telegraf", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace;
+      --radius: 18px;
+      --radius-sm: 12px;
+      --container: 1180px;
+      --header-height: 78px;
+      --section-gap: clamp(72px, 10vw, 132px);
+      --easing: cubic-bezier(0.22, 1, 0.36, 1);
+      color-scheme: light;
+    }
+
+    html[data-theme="dark"] {
+      --bg: oklch(16% 0.022 255);
+      --surface: oklch(22% 0.018 255 / 0.62);
+      --surface-strong: oklch(24% 0.018 255);
+      --fg: oklch(96% 0.006 95);
+      --muted: oklch(73% 0.014 245);
+      --border: oklch(34% 0.018 245 / 0.86);
+      --accent: oklch(77% 0.16 86);
+      --accent-soft: oklch(33% 0.055 85 / 0.56);
+      --shadow: 0 24px 90px oklch(6% 0.01 250 / 0.46);
+      --hero-glow-a: oklch(75% 0.14 85 / 0.18);
+      --hero-glow-b: oklch(60% 0.13 225 / 0.22);
+      --hero-glow-c: oklch(64% 0.13 165 / 0.16);
+      color-scheme: dark;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      font-family: var(--font-body);
+      background:
+        radial-gradient(circle at 20% 20%, var(--hero-glow-a), transparent 30%),
+        radial-gradient(circle at 78% 18%, var(--hero-glow-b), transparent 32%),
+        radial-gradient(circle at 70% 78%, var(--hero-glow-c), transparent 28%),
+        var(--bg);
+      color: var(--fg);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+      overflow-x: hidden;
+      transition:
+        background-color 400ms var(--easing),
+        color 240ms var(--easing);
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: -3;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
+      opacity: 0.035;
+      mix-blend-mode: soft-light;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    button {
+      font: inherit;
+      color: inherit;
+      background: none;
+      border: 0;
+      cursor: pointer;
+    }
+
+    .page-shell {
+      position: relative;
+      isolation: isolate;
+    }
+
+    .fluid-layer {
+      position: fixed;
+      inset: -12vh -12vw;
+      pointer-events: none;
+      z-index: -2;
+      filter: blur(54px) saturate(112%);
+      opacity: 0.92;
+    }
+
+    .orb {
+      position: absolute;
+      border-radius: 999px;
+      mix-blend-mode: plus-lighter;
+      animation: drift 18s var(--easing) infinite alternate;
+    }
+
+    .orb-a {
+      width: 44vw;
+      height: 44vw;
+      min-width: 360px;
+      min-height: 360px;
+      left: -8vw;
+      top: -8vh;
+      background: radial-gradient(circle, var(--hero-glow-a), transparent 68%);
+    }
+
+    .orb-b {
+      width: 36vw;
+      height: 36vw;
+      min-width: 280px;
+      min-height: 280px;
+      right: -2vw;
+      top: 12vh;
+      background: radial-gradient(circle, var(--hero-glow-b), transparent 70%);
+      animation-duration: 22s;
+    }
+
+    .orb-c {
+      width: 28vw;
+      height: 28vw;
+      min-width: 240px;
+      min-height: 240px;
+      left: 48vw;
+      bottom: 2vh;
+      background: radial-gradient(circle, var(--hero-glow-c), transparent 72%);
+      animation-duration: 20s;
+    }
+
+    @keyframes drift {
+      from {
+        transform: translate3d(-1.5%, -1%, 0) scale(0.98);
+      }
+      to {
+        transform: translate3d(2%, 2.2%, 0) scale(1.06);
+      }
+    }
+
+    .container {
+      width: min(calc(100% - 40px), var(--container));
+      margin: 0 auto;
+    }
+
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      backdrop-filter: blur(18px);
+      background: color-mix(in oklch, var(--bg) 78%, transparent);
+      border-bottom: 1px solid transparent;
+    }
+
+    .header-inner {
+      min-height: var(--header-height);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand-lockup {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-mark {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 20px color-mix(in oklch, var(--accent) 60%, transparent);
+      flex: 0 0 auto;
+    }
+
+    .brand-name {
+      font-size: 1rem;
+    }
+
+    .nav-cluster {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 0.94rem;
+    }
+
+    .nav-links a {
+      position: relative;
+      transition: color 180ms var(--easing);
+    }
+
+    .nav-links a::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      bottom: -8px;
+      width: 100%;
+      height: 1px;
+      transform: scaleX(0);
+      transform-origin: left;
+      background: color-mix(in oklch, var(--accent) 82%, var(--fg));
+      transition: transform 220ms var(--easing);
+    }
+
+    .nav-links a:hover,
+    .nav-links a:focus-visible {
+      color: var(--fg);
+    }
+
+    .nav-links a:hover::after,
+    .nav-links a:focus-visible::after {
+      transform: scaleX(1);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .pill-btn,
+    .cta-btn,
+    .ghost-btn {
+      border-radius: 999px;
+      transition:
+        transform 180ms var(--easing),
+        border-color 180ms var(--easing),
+        background-color 180ms var(--easing),
+        color 180ms var(--easing),
+        box-shadow 220ms var(--easing);
+      will-change: transform;
+    }
+
+    .pill-btn {
+      min-width: 48px;
+      padding: 11px 14px;
+      border: 1px solid var(--border);
+      background: color-mix(in oklch, var(--surface) 72%, transparent);
+      color: var(--muted);
+      box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.06);
+    }
+
+    .pill-btn:hover,
+    .pill-btn:focus-visible,
+    .ghost-btn:hover,
+    .ghost-btn:focus-visible,
+    .cta-btn:hover,
+    .cta-btn:focus-visible {
+      transform: translateY(-1px);
+    }
+
+    .pill-btn.is-active {
+      color: var(--fg);
+      border-color: color-mix(in oklch, var(--accent) 34%, var(--border));
+      background: color-mix(in oklch, var(--accent-soft) 58%, var(--surface));
+    }
+
+    .hero {
+      padding: clamp(64px, 10vw, 112px) 0 44px;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 26px;
+      justify-items: center;
+      text-align: center;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid color-mix(in oklch, var(--accent) 24%, var(--border));
+      background: color-mix(in oklch, var(--surface) 62%, transparent);
+      color: var(--muted);
+      font-size: 0.8rem;
+      letter-spacing: 0.01em;
+      margin-bottom: 22px;
+    }
+
+    .eyebrow-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 18px color-mix(in oklch, var(--accent) 55%, transparent);
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      font-family: var(--font-display);
+      letter-spacing: -0.045em;
+      text-wrap: balance;
+    }
+
+    .hero-title {
+      font-size: clamp(3.4rem, 7vw, 6.2rem);
+      line-height: 0.95;
+      max-width: 11ch;
+      margin-inline: auto;
+    }
+
+    .hero-title .accent {
+      color: var(--accent);
+    }
+
+    .hero-copy {
+      margin-top: 22px;
+      max-width: 40ch;
+      color: var(--muted);
+      font-size: clamp(1.05rem, 1.5vw, 1.22rem);
+      line-height: 1.68;
+      text-wrap: pretty;
+      margin-inline: auto;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-top: 28px;
+      justify-content: center;
+    }
+
+    .cta-btn,
+    .ghost-btn {
+      padding: 14px 20px;
+      font-weight: 600;
+      font-size: 0.96rem;
+      border: 1px solid transparent;
+    }
+
+    .cta-btn {
+      background: var(--fg);
+      color: var(--bg);
+      box-shadow: 0 12px 30px color-mix(in oklch, var(--fg) 12%, transparent);
+    }
+
+    .ghost-btn {
+      border-color: var(--border);
+      color: var(--fg);
+      background: color-mix(in oklch, var(--surface) 76%, transparent);
+    }
+
+    .hero-proof {
+      padding: 22px;
+      border-radius: calc(var(--radius) + 4px);
+      border: 1px solid var(--border);
+      background:
+        linear-gradient(180deg, color-mix(in oklch, var(--surface-strong) 88%, transparent), color-mix(in oklch, var(--surface) 90%, transparent));
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      position: relative;
+      max-width: 700px;
+      width: 100%;
+      text-align: left;
+    }
+
+    .hero-proof::before {
+      content: "";
+      position: absolute;
+      inset: -10% 55% 48% -10%;
+      background: radial-gradient(circle, color-mix(in oklch, var(--accent) 26%, transparent), transparent 70%);
+      opacity: 0.9;
+    }
+
+    .proof-label {
+      position: relative;
+      color: var(--muted);
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .proof-title {
+      position: relative;
+      margin-top: 18px;
+      font-size: 1.48rem;
+      line-height: 1.1;
+    }
+
+    .proof-list {
+      position: relative;
+      margin: 20px 0 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 12px;
+    }
+
+    .proof-list li {
+      display: grid;
+      grid-template-columns: 18px 1fr;
+      gap: 12px;
+      align-items: start;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .proof-list li::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      margin-top: 0.42rem;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 16px color-mix(in oklch, var(--accent) 55%, transparent);
+    }
+
+    .section {
+      padding: var(--section-gap) 0 0;
+      scroll-margin-top: calc(var(--header-height) + 18px);
+    }
+
+    .section-head {
+      display: grid;
+      gap: 12px;
+      max-width: 640px;
+      margin: 0 auto 28px;
+      text-align: center;
+    }
+
+    .kicker {
+      color: var(--accent);
+      font-size: 0.82rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .section-head h2 {
+      font-size: clamp(2rem, 4vw, 3.25rem);
+      line-height: 0.98;
+    }
+
+    .section-head p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 1rem;
+      line-height: 1.62;
+      max-width: 48ch;
+      margin-inline: auto;
+    }
+
+    .stats-grid,
+    .preview-grid {
+      display: grid;
+      gap: 18px;
+    }
+
+    .stats-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .card {
+      position: relative;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: color-mix(in oklch, var(--surface) 78%, transparent);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .stat-card {
+      padding: 28px 24px 24px;
+      min-height: 210px;
+    }
+
+    .stat-card::before,
+    .preview-card::before,
+    .problem-panel::before,
+    .flow-card::before,
+    .cta-panel::before {
+      content: "";
+      position: absolute;
+      inset: auto auto 0 0;
+      width: 100%;
+      height: 1px;
+      background: linear-gradient(90deg, color-mix(in oklch, var(--accent) 26%, var(--border)), transparent);
+      opacity: 0.9;
+    }
+
+    .stat-index,
+    .preview-tag,
+    .flow-step-label {
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .stat-value {
+      margin-top: 18px;
+      font-size: clamp(2rem, 4vw, 3rem);
+      line-height: 0.95;
+      font-weight: 700;
+      letter-spacing: -0.06em;
+    }
+
+    .stat-card h3,
+    .problem-panel h3,
+    .preview-card h3 {
+      margin-top: 18px;
+      font-size: 1.16rem;
+      line-height: 1.08;
+    }
+
+    .stat-card p,
+    .problem-panel p,
+    .preview-card p,
+    .flow-card p,
+    .cta-panel p,
+    .footer-copy {
+      margin: 12px 0 0;
+      color: var(--muted);
+      line-height: 1.65;
+      text-wrap: pretty;
+    }
+
+    .problem-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 0.95fr) minmax(280px, 0.85fr);
+      gap: 22px;
+      align-items: stretch;
+    }
+
+    .problem-panel {
+      padding: 28px 26px;
+    }
+
+    .exposure-list {
+      margin: 18px 0 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 12px;
+      color: var(--muted);
+    }
+
+    .exposure-list li {
+      padding-top: 12px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 78%, transparent);
+    }
+
+    .flow-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .flow-card {
+      padding: 26px 22px 22px;
+      min-height: 220px;
+    }
+
+    .flow-card h3 {
+      margin-top: 22px;
+      font-size: 1.14rem;
+      line-height: 1.08;
+    }
+
+    .flow-card ul {
+      margin: 14px 0 0;
+      padding-left: 18px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .flow-card li + li {
+      margin-top: 8px;
+    }
+
+    .preview-grid {
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.9fr) minmax(0, 0.9fr);
+      align-items: stretch;
+    }
+
+    .preview-card {
+      padding: 24px;
+      min-height: 340px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .preview-frame {
+      flex: 1 1 auto;
+      min-height: 190px;
+      border-radius: calc(var(--radius-sm) + 2px);
+      border: 1px solid color-mix(in oklch, var(--border) 88%, transparent);
+      background:
+        linear-gradient(180deg, color-mix(in oklch, var(--surface-strong) 86%, transparent), color-mix(in oklch, var(--surface) 88%, transparent));
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+      overflow: hidden;
+    }
+
+    .frame-bar,
+    .frame-chip,
+    .frame-line,
+    .frame-pill,
+    .frame-meter,
+    .frame-progress {
+      border-radius: 999px;
+      background: color-mix(in oklch, var(--border) 72%, transparent);
+    }
+
+    .frame-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .frame-bar {
+      width: 74px;
+      height: 8px;
+    }
+
+    .frame-chip {
+      width: 58px;
+      height: 26px;
+      background: color-mix(in oklch, var(--accent-soft) 78%, var(--surface));
+      border: 1px solid color-mix(in oklch, var(--accent) 28%, var(--border));
+    }
+
+    .frame-metric {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      padding: 18px;
+      border-radius: calc(var(--radius-sm) + 2px);
+      background: color-mix(in oklch, var(--surface) 92%, transparent);
+      border: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
+    }
+
+    .frame-line {
+      height: 10px;
+      margin-top: 8px;
+    }
+
+    .frame-line.wide {
+      width: 90%;
+    }
+
+    .frame-line.mid {
+      width: 72%;
+    }
+
+    .frame-line.short {
+      width: 48%;
+    }
+
+    .frame-pill {
+      width: 110px;
+      height: 34px;
+      background: color-mix(in oklch, var(--accent) 18%, var(--surface));
+      border: 1px solid color-mix(in oklch, var(--accent) 34%, var(--border));
+    }
+
+    .frame-meter {
+      width: 90px;
+      height: 90px;
+      background:
+        radial-gradient(circle at 50% 50%, color-mix(in oklch, var(--surface) 90%, transparent) 42%, transparent 43%),
+        conic-gradient(from 180deg, var(--accent) 0 60%, color-mix(in oklch, var(--border) 88%, transparent) 60% 100%);
+      border: 1px solid color-mix(in oklch, var(--border) 72%, transparent);
+    }
+
+    .frame-progress {
+      height: 10px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .frame-progress::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      width: 64%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, color-mix(in oklch, var(--accent) 72%, transparent), color-mix(in oklch, var(--accent) 28%, var(--surface)));
+    }
+
+    .frame-rows {
+      display: grid;
+      gap: 10px;
+    }
+
+    .frame-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .frame-row .frame-line {
+      margin-top: 0;
+    }
+
+    .frame-row .frame-chip {
+      width: 44px;
+      height: 18px;
+      background: color-mix(in oklch, var(--border) 68%, transparent);
+      border: 0;
+    }
+
+    .cta-section {
+      padding-bottom: var(--section-gap);
+    }
+
+    .cta-panel {
+      padding: clamp(28px, 6vw, 42px);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 22px;
+      align-items: center;
+    }
+
+    .cta-panel h2 {
+      font-size: clamp(2.1rem, 4vw, 3.2rem);
+      line-height: 0.98;
+    }
+
+    .footer {
+      padding: 0 0 34px;
+    }
+
+    .footer-inner {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 24px;
+      border-top: 1px solid color-mix(in oklch, var(--border) 82%, transparent);
+    }
+
+    .footer-links {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      color: var(--muted);
+      font-size: 0.94rem;
+      flex-wrap: wrap;
+    }
+
+    .footer-links a:hover,
+    .footer-links a:focus-visible {
+      color: var(--fg);
+    }
+
+    @media (max-width: 1040px) {
+      .hero-grid,
+      .problem-layout,
+      .preview-grid,
+      .cta-panel {
+        grid-template-columns: 1fr;
+      }
+
+      .stats-grid,
+      .flow-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 780px) {
+      .header-inner,
+      .nav-cluster {
+        align-items: flex-start;
+      }
+
+      .header-inner {
+        flex-direction: column;
+        padding: 16px 0;
+      }
+
+      .nav-cluster {
+        width: 100%;
+        justify-content: space-between;
+      }
+
+      .nav-links {
+        gap: 14px;
+        font-size: 0.9rem;
+      }
+
+      .header-actions {
+        margin-left: auto;
+      }
+
+      .hero {
+        padding-top: 44px;
+      }
+
+      .container {
+        width: min(calc(100% - 28px), var(--container));
+      }
+
+      .cta-btn,
+      .ghost-btn,
+      .pill-btn {
+        width: auto;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+
+      *,
+      *::before,
+      *::after {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-shell">
+    <div class="fluid-layer" aria-hidden="true">
+      <div class="orb orb-a"></div>
+      <div class="orb orb-b"></div>
+      <div class="orb orb-c"></div>
+    </div>
+
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand-lockup" href="#top" aria-label="ZamaDrop">
+          <span class="brand-mark"></span>
+          <span class="brand-name">ZamaDrop</span>
+        </a>
+
+        <div class="nav-cluster">
+          <nav class="nav-links" aria-label="Primary">
+            <a href="#proof" data-i18n="navProof">Proof</a>
+            <a href="#problem" data-i18n="navProblem">Problem</a>
+            <a href="#flow" data-i18n="navFlow">How it works</a>
+            <a href="#preview" data-i18n="navPreview">Preview</a>
+          </nav>
+
+          <div class="header-actions" aria-label="Display controls">
+            <button class="pill-btn is-active" id="langToggle" type="button" aria-label="Toggle language">EN</button>
+            <button class="pill-btn" id="themeToggle" type="button" aria-label="Toggle theme">Light</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="container hero-grid">
+          <div>
+            <div class="eyebrow">
+              <span class="eyebrow-dot"></span>
+              <span data-i18n="eyebrow">Built on Zama FHE. Designed for public campaigns.</span>
+            </div>
+
+            <h1 class="hero-title" data-od-id="hero-headline">
+              <span data-i18n="heroTitleA">Private allocations.</span><br>
+              <span class="accent" data-i18n="heroTitleB">Public accountability.</span>
+            </h1>
+
+            <p class="hero-copy" data-od-id="hero-copy" data-i18n="heroCopy">
+              Confidential token distribution for public Web3 campaigns. Public campaign proof. Private recipient amounts.
+            </p>
+
+            <div class="hero-actions">
+              <a class="cta-btn" href="#preview" data-i18n="heroCtaPrimary">View product preview</a>
+              <a class="ghost-btn" href="#flow" data-i18n="heroCtaSecondary">See the claim flow</a>
+            </div>
+          </div>
+
+          <aside class="hero-proof" data-od-id="hero-proof">
+            <div class="proof-label" data-i18n="proofLabel">What stays public vs private</div>
+            <h2 class="proof-title" data-i18n="proofTitle">Merkle proofs still prove who can claim. ZamaDrop protects how much.</h2>
+            <ul class="proof-list">
+              <li data-i18n="proofItem1">Public sees campaign totals, rules, recipient count, status, and claim progress.</li>
+              <li data-i18n="proofItem2">Recipients decrypt only their own allocation before they claim.</li>
+              <li data-i18n="proofItem3">Auditors verify aggregate claimed totals, never personal allocations.</li>
+            </ul>
+          </aside>
+        </div>
+      </section>
+
+      <section class="section" id="proof">
+        <div class="container">
+          <div class="section-head">
+            <div class="kicker" data-i18n="statsKicker">Trust / protocol signals</div>
+            <h2 data-i18n="statsTitle">Public enough to trust. Private where it matters.</h2>
+            <p data-i18n="statsCopy">Campaign-level signals stay visible. Personal allocations do not.</p>
+          </div>
+
+          <div class="stats-grid" data-od-id="stats-grid">
+            <article class="card stat-card">
+              <div class="stat-index" data-i18n="stat1Index">01 / Campaign transparency</div>
+              <div class="stat-value" data-i18n="stat1Value">Public rules</div>
+              <h3 data-i18n="stat1Title">The campaign remains explainable.</h3>
+              <p data-i18n="stat1Copy">Admin publishes total distribution, allocation logic, recipient count, status, and progress so the campaign can still be inspected in public.</p>
+            </article>
+
+            <article class="card stat-card">
+              <div class="stat-index" data-i18n="stat2Index">02 / Allocation privacy</div>
+              <div class="stat-value" data-i18n="stat2Value">Private amounts</div>
+              <h3 data-i18n="stat2Title">Individual allocations stay hidden.</h3>
+              <p data-i18n="stat2Copy">Public viewers never learn who received how much. Recipients decrypt only their own number before they claim.</p>
+            </article>
+
+            <article class="card stat-card">
+              <div class="stat-index" data-i18n="stat3Index">03 / Verifiable progress</div>
+              <div class="stat-value" data-i18n="stat3Value">Auditable totals</div>
+              <h3 data-i18n="stat3Title">Aggregate claims remain checkable.</h3>
+              <p data-i18n="stat3Copy">Auditors verify claimed totals at the aggregate level, which preserves accountability without opening personal allocation data.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="problem">
+        <div class="container">
+          <div class="section-head">
+            <div class="kicker" data-i18n="problemKicker">Problem</div>
+            <h2 data-i18n="problemTitle">Standard token distribution exposes the strategy.</h2>
+            <p data-i18n="problemCopy">Public amounts become a map of who got what, and that leaks more than the campaign intended.</p>
+          </div>
+
+          <div class="problem-layout">
+            <article class="card problem-panel">
+              <div class="stat-index" data-i18n="problemPanelIndex">What the public can infer today</div>
+              <h3 data-i18n="problemPanelTitle">A standard drop often reveals more than the campaign intended.</h3>
+              <ul class="exposure-list">
+                <li data-i18n="problemItem1">Who received the largest share.</li>
+                <li data-i18n="problemItem2">How the project prioritized contributors, investors, or partners.</li>
+                <li data-i18n="problemItem3">Which recipients become obvious phishing and doxxing targets.</li>
+              </ul>
+            </article>
+
+            <article class="card problem-panel">
+              <div class="stat-index" data-i18n="solutionPanelIndex">What ZamaDrop changes</div>
+              <h3 data-i18n="solutionPanelTitle">Keep the campaign public. Keep the personal allocation private.</h3>
+              <p data-i18n="solutionPanelCopy">ZamaDrop does not replace Merkle eligibility. It adds the missing confidentiality layer on top of public campaign transparency using Fully Homomorphic Encryption from Zama.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="flow">
+        <div class="container">
+          <div class="section-head">
+            <div class="kicker" data-i18n="flowKicker">How it works</div>
+            <h2 data-i18n="flowTitle">A simple flow says more than a crowded diagram.</h2>
+            <p data-i18n="flowCopy">Configure. Decrypt. Verify.</p>
+          </div>
+
+          <div class="flow-grid" data-od-id="flow-grid">
+            <article class="card flow-card">
+              <div class="flow-step-label" data-i18n="flowStep1Label">Step 01 / Admin</div>
+              <h3 data-i18n="flowStep1Title">Configure the campaign and declare the public rules.</h3>
+              <ul>
+                <li data-i18n="flowStep1Item1">Set total distribution, recipient count, and status.</li>
+                <li data-i18n="flowStep1Item2">Declare public allocation ranges and campaign constraints.</li>
+                <li data-i18n="flowStep1Item3">Submit encrypted allocations without revealing exact recipient amounts.</li>
+              </ul>
+            </article>
+
+            <article class="card flow-card">
+              <div class="flow-step-label" data-i18n="flowStep2Label">Step 02 / Recipient</div>
+              <h3 data-i18n="flowStep2Title">Decrypt only your own allocation and claim it.</h3>
+              <ul>
+                <li data-i18n="flowStep2Item1">Prove eligibility through the Merkle path.</li>
+                <li data-i18n="flowStep2Item2">Use Zama-powered decryption for a single personal allocation.</li>
+                <li data-i18n="flowStep2Item3">Claim without exposing your amount to the rest of the campaign.</li>
+              </ul>
+            </article>
+
+            <article class="card flow-card">
+              <div class="flow-step-label" data-i18n="flowStep3Label">Step 03 / Public + Auditor</div>
+              <h3 data-i18n="flowStep3Title">Verify progress and aggregate claimed totals.</h3>
+              <ul>
+                <li data-i18n="flowStep3Item1">Public sees totals, rules, count, status, and progress.</li>
+                <li data-i18n="flowStep3Item2">Auditor checks aggregate claimed totals only.</li>
+                <li data-i18n="flowStep3Item3">No role outside the recipient can inspect a personal allocation value.</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="preview">
+        <div class="container">
+          <div class="section-head">
+            <div class="kicker" data-i18n="previewKicker">Product preview</div>
+            <h2 data-i18n="previewTitle">Three simple surfaces.</h2>
+            <p data-i18n="previewCopy">One for Admin, one for Recipient, one for public progress.</p>
+          </div>
+
+          <div class="preview-grid" data-od-id="preview-grid">
+            <article class="card preview-card">
+              <div class="preview-tag" data-i18n="preview1Tag">Admin view</div>
+              <div class="preview-frame" aria-hidden="true">
+                <div class="frame-top">
+                  <div class="frame-bar"></div>
+                  <div class="frame-chip"></div>
+                </div>
+                <div class="frame-metric">
+                  <div>
+                    <div class="frame-line wide"></div>
+                    <div class="frame-line short"></div>
+                  </div>
+                  <div class="frame-meter"></div>
+                </div>
+                <div class="frame-progress"></div>
+                <div class="frame-rows">
+                  <div class="frame-row"><div class="frame-line wide"></div><div class="frame-chip"></div></div>
+                  <div class="frame-row"><div class="frame-line mid"></div><div class="frame-chip"></div></div>
+                </div>
+              </div>
+              <h3 data-i18n="preview1Title">Campaign setup with public totals and encrypted personal amounts.</h3>
+              <p data-i18n="preview1Copy">Admin declares what the campaign should expose publicly, while the specific allocation data remains confidential.</p>
+            </article>
+
+            <article class="card preview-card">
+              <div class="preview-tag" data-i18n="preview2Tag">Recipient view</div>
+              <div class="preview-frame" aria-hidden="true">
+                <div class="frame-top">
+                  <div class="frame-bar"></div>
+                  <div class="frame-chip"></div>
+                </div>
+                <div class="frame-metric">
+                  <div>
+                    <div class="frame-line mid"></div>
+                    <div class="frame-line short"></div>
+                  </div>
+                  <div class="frame-pill"></div>
+                </div>
+                <div class="frame-line wide"></div>
+                <div class="frame-line mid"></div>
+                <div class="frame-pill"></div>
+              </div>
+              <h3 data-i18n="preview2Title">A focused claim surface for one person and one allocation.</h3>
+              <p data-i18n="preview2Copy">Recipients decrypt only their own number and claim without browsing everyone else’s distribution data.</p>
+            </article>
+
+            <article class="card preview-card">
+              <div class="preview-tag" data-i18n="preview3Tag">Public progress</div>
+              <div class="preview-frame" aria-hidden="true">
+                <div class="frame-top">
+                  <div class="frame-bar"></div>
+                  <div class="frame-chip"></div>
+                </div>
+                <div class="frame-line wide"></div>
+                <div class="frame-progress"></div>
+                <div class="frame-rows">
+                  <div class="frame-row"><div class="frame-line wide"></div><div class="frame-chip"></div></div>
+                  <div class="frame-row"><div class="frame-line mid"></div><div class="frame-chip"></div></div>
+                  <div class="frame-row"><div class="frame-line short"></div><div class="frame-chip"></div></div>
+                </div>
+              </div>
+              <h3 data-i18n="preview3Title">A public surface that shows progress without exposing recipients.</h3>
+              <p data-i18n="preview3Copy">Observers track campaign status and aggregate movement without turning the drop into a public ranking of personal allocations.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section cta-section">
+        <div class="container">
+          <div class="card cta-panel">
+            <div>
+              <div class="kicker" data-i18n="ctaKicker">Final call</div>
+              <h2 data-i18n="ctaTitle">Run a public campaign without exposing every allocation.</h2>
+              <p data-i18n="ctaCopy">Public accountability for the campaign. Privacy for the recipient.</p>
+            </div>
+            <a class="cta-btn" href="#top" data-i18n="ctaButton">Back to top</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container footer-inner">
+        <div class="footer-copy" data-i18n="footerCopy">Powered by Zama Protocol. Merkle proofs prove who can claim. ZamaDrop protects how much.</div>
+        <nav class="footer-links" aria-label="Footer">
+          <a href="#proof" data-i18n="footerLink1">Trust</a>
+          <a href="#flow" data-i18n="footerLink2">Flow</a>
+          <a href="#preview" data-i18n="footerLink3">Preview</a>
+        </nav>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    const copy = {
+      en: {
+        navProof: "Proof",
+        navProblem: "Problem",
+        navFlow: "How it works",
+        navPreview: "Preview",
+        eyebrow: "Built on Zama FHE. Designed for public campaigns.",
+        heroTitleA: "Private allocations.",
+        heroTitleB: "Public accountability.",
+        heroCopy: "Confidential token distribution for public Web3 campaigns. Public campaign proof. Private recipient amounts.",
+        heroCtaPrimary: "View product preview",
+        heroCtaSecondary: "See the claim flow",
+        proofLabel: "What stays public vs private",
+        proofTitle: "Merkle proofs still prove who can claim. ZamaDrop protects how much.",
+        proofItem1: "Public sees campaign totals, rules, recipient count, status, and claim progress.",
+        proofItem2: "Recipients decrypt only their own allocation before they claim.",
+        proofItem3: "Auditors verify aggregate claimed totals, never personal allocations.",
+        statsKicker: "Trust / protocol signals",
+        statsTitle: "Public enough to trust. Private where it matters.",
+        statsCopy: "Campaign-level signals stay visible. Personal allocations do not.",
+        stat1Index: "01 / Campaign transparency",
+        stat1Value: "Public rules",
+        stat1Title: "The campaign remains explainable.",
+        stat1Copy: "Admin publishes total distribution, allocation logic, recipient count, status, and progress so the campaign can still be inspected in public.",
+        stat2Index: "02 / Allocation privacy",
+        stat2Value: "Private amounts",
+        stat2Title: "Individual allocations stay hidden.",
+        stat2Copy: "Public viewers never learn who received how much. Recipients decrypt only their own number before they claim.",
+        stat3Index: "03 / Verifiable progress",
+        stat3Value: "Auditable totals",
+        stat3Title: "Aggregate claims remain checkable.",
+        stat3Copy: "Auditors verify claimed totals at the aggregate level, which preserves accountability without opening personal allocation data.",
+        problemKicker: "Problem",
+        problemTitle: "Standard token distribution exposes the strategy.",
+        problemCopy: "Public amounts become a map of who got what, and that leaks more than the campaign intended.",
+        problemPanelIndex: "What the public can infer today",
+        problemPanelTitle: "A standard drop often reveals more than the campaign intended.",
+        problemItem1: "Who received the largest share.",
+        problemItem2: "How the project prioritized contributors, investors, or partners.",
+        problemItem3: "Which recipients become obvious phishing and doxxing targets.",
+        solutionPanelIndex: "What ZamaDrop changes",
+        solutionPanelTitle: "Keep the campaign public. Keep the personal allocation private.",
+        solutionPanelCopy: "ZamaDrop does not replace Merkle eligibility. It adds the missing confidentiality layer on top of public campaign transparency using Fully Homomorphic Encryption from Zama.",
+        flowKicker: "How it works",
+        flowTitle: "A simple flow says more than a crowded diagram.",
+        flowCopy: "Configure. Decrypt. Verify.",
+        flowStep1Label: "Step 01 / Admin",
+        flowStep1Title: "Configure the campaign and declare the public rules.",
+        flowStep1Item1: "Set total distribution, recipient count, and status.",
+        flowStep1Item2: "Declare public allocation ranges and campaign constraints.",
+        flowStep1Item3: "Submit encrypted allocations without revealing exact recipient amounts.",
+        flowStep2Label: "Step 02 / Recipient",
+        flowStep2Title: "Decrypt only your own allocation and claim it.",
+        flowStep2Item1: "Prove eligibility through the Merkle path.",
+        flowStep2Item2: "Use Zama-powered decryption for a single personal allocation.",
+        flowStep2Item3: "Claim without exposing your amount to the rest of the campaign.",
+        flowStep3Label: "Step 03 / Public + Auditor",
+        flowStep3Title: "Verify progress and aggregate claimed totals.",
+        flowStep3Item1: "Public sees totals, rules, count, status, and progress.",
+        flowStep3Item2: "Auditor checks aggregate claimed totals only.",
+        flowStep3Item3: "No role outside the recipient can inspect a personal allocation value.",
+        previewKicker: "Product preview",
+        previewTitle: "Three simple surfaces.",
+        previewCopy: "One for Admin, one for Recipient, one for public progress.",
+        preview1Tag: "Admin view",
+        preview1Title: "Campaign setup with public totals and encrypted personal amounts.",
+        preview1Copy: "Admin declares what the campaign should expose publicly, while the specific allocation data remains confidential.",
+        preview2Tag: "Recipient view",
+        preview2Title: "A focused claim surface for one person and one allocation.",
+        preview2Copy: "Recipients decrypt only their own number and claim without browsing everyone else’s distribution data.",
+        preview3Tag: "Public progress",
+        preview3Title: "A public surface that shows progress without exposing recipients.",
+        preview3Copy: "Observers track campaign status and aggregate movement without turning the drop into a public ranking of personal allocations.",
+        ctaKicker: "Final call",
+        ctaTitle: "Run a public campaign without exposing every allocation.",
+        ctaCopy: "Public accountability for the campaign. Privacy for the recipient.",
+        ctaButton: "Back to top",
+        footerCopy: "Powered by Zama Protocol. Merkle proofs prove who can claim. ZamaDrop protects how much.",
+        footerLink1: "Trust",
+        footerLink2: "Flow",
+        footerLink3: "Preview"
+      },
+      zh: {
+        navProof: "证明",
+        navProblem: "问题",
+        navFlow: "流程",
+        navPreview: "预览",
+        eyebrow: "基于 Zama FHE。为公开活动设计。",
+        heroTitleA: "私有分配。",
+        heroTitleB: "公开问责。",
+        heroCopy: "面向公开 Web3 活动的机密代币分发。活动公开可验证，个人金额保持私密。",
+        heroCtaPrimary: "查看产品预览",
+        heroCtaSecondary: "查看领取流程",
+        proofLabel: "什么是公开的，什么是私密的",
+        proofTitle: "Merkle 证明继续证明谁能领，ZamaDrop 保护的是领多少。",
+        proofItem1: "公众可以看到活动总量、规则、人数、状态和领取进度。",
+        proofItem2: "受益人只会在领取前解密属于自己的那一笔分配。",
+        proofItem3: "审计员只验证聚合后的已领取总额，不接触个人分配。",
+        statsKicker: "信任 / 协议信号",
+        statsTitle: "公开到足够建立信任，私密到刚好保护个人。",
+        statsCopy: "活动级信号公开，个人分配不公开。",
+        stat1Index: "01 / 活动透明",
+        stat1Value: "公开规则",
+        stat1Title: "活动仍然是可解释的。",
+        stat1Copy: "Admin 公开总分发量、分配逻辑、人数、状态和进度，因此整个活动依然可以被外部审视。",
+        stat2Index: "02 / 分配私密",
+        stat2Value: "私密金额",
+        stat2Title: "个人分配保持隐藏。",
+        stat2Copy: "公众无法知道谁拿了多少。Recipient 只会在领取前解密自己的那一个数字。",
+        stat3Index: "03 / 进度可审计",
+        stat3Value: "可验证总额",
+        stat3Title: "聚合领取额依然可检查。",
+        stat3Copy: "Auditor 在聚合层面验证已领取总额，在不打开个人数据的前提下保留问责能力。",
+        problemKicker: "问题",
+        problemTitle: "标准代币发放会暴露分配策略。",
+        problemCopy: "当金额公开时，整场活动就变成了一张谁拿了多少的公开地图。",
+        problemPanelIndex: "今天公众能推断出什么",
+        problemPanelTitle: "标准空投通常暴露的信息远超活动本意。",
+        problemItem1: "谁拿到了最大的份额。",
+        problemItem2: "项目如何优先对待贡献者、投资人或合作伙伴。",
+        problemItem3: "哪些受益人成为明显的钓鱼和 doxxing 目标。",
+        solutionPanelIndex: "ZamaDrop 改变了什么",
+        solutionPanelTitle: "让活动继续公开，让个人分配继续私密。",
+        solutionPanelCopy: "ZamaDrop 不替代 Merkle eligibility。它是在公开活动透明度之上，再叠加一层由 Zama Fully Homomorphic Encryption 提供的机密层。",
+        flowKicker: "工作方式",
+        flowTitle: "一个简单流程，比拥挤概念图更有说服力。",
+        flowCopy: "配置。解密。验证。",
+        flowStep1Label: "步骤 01 / Admin",
+        flowStep1Title: "配置活动，并声明公开规则。",
+        flowStep1Item1: "设置总分发量、受益人数和活动状态。",
+        flowStep1Item2: "声明公开的分配区间和活动约束。",
+        flowStep1Item3: "提交加密后的个人分配，而不暴露精确金额。",
+        flowStep2Label: "步骤 02 / Recipient",
+        flowStep2Title: "只解密自己的分配，并完成领取。",
+        flowStep2Item1: "通过 Merkle 路径证明资格。",
+        flowStep2Item2: "借助 Zama 的能力完成单个个人分配的解密。",
+        flowStep2Item3: "在不向整个活动公开金额的前提下完成领取。",
+        flowStep3Label: "步骤 03 / Public + Auditor",
+        flowStep3Title: "验证进度与聚合领取总额。",
+        flowStep3Item1: "Public 看到总量、规则、人数、状态和进度。",
+        flowStep3Item2: "Auditor 只检查聚合后的已领取总额。",
+        flowStep3Item3: "除 Recipient 外，没有任何角色可以查看个人分配数值。",
+        previewKicker: "产品预览",
+        previewTitle: "三个简单界面。",
+        previewCopy: "Admin、Recipient、公开进度，各自清楚。",
+        preview1Tag: "Admin 视图",
+        preview1Title: "公开总量，隐藏个人金额的活动配置面板。",
+        preview1Copy: "Admin 决定哪些活动信息应该公开，同时让具体分配数据保持机密。",
+        preview2Tag: "Recipient 视图",
+        preview2Title: "一个人，只看到自己的一笔分配。",
+        preview2Copy: "Recipient 只解密并领取自己的金额，不需要浏览整个活动的他人数据。",
+        preview3Tag: "公开进度",
+        preview3Title: "公开显示进度，但不暴露受益人。",
+        preview3Copy: "观察者可以跟踪活动状态和聚合进度，而不会把整个空投变成个人分配排行榜。",
+        ctaKicker: "最后一段",
+        ctaTitle: "发起公开活动，不必公开每个人的数字。",
+        ctaCopy: "活动公开问责，个人分配私密可控。",
+        ctaButton: "回到顶部",
+        footerCopy: "Powered by Zama Protocol。Merkle 证明谁能领，ZamaDrop 保护领多少。",
+        footerLink1: "信任",
+        footerLink2: "流程",
+        footerLink3: "预览"
+      }
+    };
+
+    const root = document.documentElement;
+    const langToggle = document.getElementById("langToggle");
+    const themeToggle = document.getElementById("themeToggle");
+    const textNodes = document.querySelectorAll("[data-i18n]");
+
+    function applyLanguage(lang) {
+      const dict = copy[lang];
+      textNodes.forEach((node) => {
+        const key = node.getAttribute("data-i18n");
+        if (dict[key]) {
+          node.textContent = dict[key];
+        }
+      });
+
+      root.lang = lang === "zh" ? "zh-CN" : "en";
+      langToggle.textContent = lang === "zh" ? "中文" : "EN";
+      langToggle.classList.toggle("is-active", true);
+      localStorage.setItem("zamadrop:v2:lang", lang);
+    }
+
+    function applyTheme(theme) {
+      root.setAttribute("data-theme", theme);
+      themeToggle.textContent = theme === "dark" ? "Dark" : "Light";
+      themeToggle.classList.toggle("is-active", true);
+      localStorage.setItem("zamadrop:v2:theme", theme);
+    }
+
+    const savedLang = localStorage.getItem("zamadrop:v2:lang") || "en";
+    const savedTheme = localStorage.getItem("zamadrop:v2:theme") || "light";
+
+    applyLanguage(savedLang);
+    applyTheme(savedTheme);
+
+    langToggle.addEventListener("click", () => {
+      const next = root.lang === "zh-CN" ? "en" : "zh";
+      applyLanguage(next);
+    });
+
+    themeToggle.addEventListener("click", () => {
+      const next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      applyTheme(next);
+    });
+  </script>
+</body>
+</html>
