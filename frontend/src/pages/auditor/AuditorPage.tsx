@@ -9,20 +9,27 @@ import { useTokenMeta } from "@/hooks/useTokenMeta";
 import { AggregateCard } from "./AggregateCard";
 import { ClaimsActivity } from "./ClaimsActivity";
 import { ComplianceCard } from "./ComplianceCard";
+import { PerClaimAuditCard } from "./PerClaimAuditCard";
+import { RecipientListHashCard } from "./RecipientListHashCard";
+import { SolvencyCard } from "./SolvencyCard";
 
-/** Auditor page · spec: docs/role-page-protocol.md §4.4
+/** V7 Auditor page · spec: auditor-verification capability.
  *
- * V6 design: preview mode renders the same workflow surface as the active
- * mode, minus the encrypted aggregate decrypt (that read reverts NotAuditor
- * for non-auditor wallets and would surface an error for no real reason).
- * The compliance explainer + claim activity feed remain visible because they
- * ARE the compliance proof — every visitor should see what the auditor can
- * and cannot decrypt without holding the role.
+ * Strict read-only view. No mutating chain actions are exposed; every
+ * interactive button is either local computation (list-hash recompute,
+ * solvency invariant) or a Zama Gateway off-chain decryption (aggregate
+ * claimed total). The V6 ComplianceCard + ClaimsActivity stay as-is because
+ * they are the privacy-boundary explainer.
  *
- * Three states:
- *   A. Disconnected            → preview alert + ComplianceCard + ClaimsActivity
- *   B. Connected, not auditor  → preview alert + ComplianceCard + ClaimsActivity
- *   C. Connected as auditor    → full view (aggregate + compliance + activity) */
+ * V7 additions:
+ *   - RecipientListHashCard:  re-derive listHash from AllocationSet events
+ *   - SolvencyCard:           balance ≥ declaredTotal − claimedTotalPlaintext
+ *   - PerClaimAuditCard:      surface KMS proof bytes per executeTransfer tx
+ *
+ * Three states (preserved from V6):
+ *   A. Disconnected            → preview
+ *   B. Connected, not auditor  → preview (no aggregate decrypt)
+ *   C. Connected as auditor    → full view with aggregate decrypt enabled */
 export default function AuditorPage() {
   const { campaignAddress } = useCampaignParam();
   const { address, isConnected } = useAccount();
@@ -36,68 +43,82 @@ export default function AuditorPage() {
     !!auditor &&
     address.toLowerCase() === auditor.toLowerCase();
 
-  // Preview mode (states A + B): keep ComplianceCard visible so the FHE
-  // privacy boundary stays inspectable without the wallet (compliance demo).
-  // Hide AggregateCard (role-gated read) and ClaimsActivity (role-specific
-  // operational ledger).
-  if (!isAuditor) {
-    return (
-      <div className="space-y-6">
-        {!isConnected ? (
-          <Alert variant="warning">
-            <AlertTitle>Preview mode · not connected</AlertTitle>
-            <AlertDescription>
-              Connect a wallet to see whether you can decrypt the aggregate.
-              Until then this is a read-only walkthrough of what the auditor
-              sees.
-            </AlertDescription>
-          </Alert>
-        ) : (
-          <Alert variant="warning">
-            <AlertTitle>Preview mode · not the auditor</AlertTitle>
-            <AlertDescription>
-              This wallet does not hold the auditor role for this campaign.
-              You can inspect the auditor workflow but cannot decrypt the
-              aggregate. Auditor address:{" "}
-              {auditor ? (
-                <a
-                  href={`${ETHERSCAN_BASE}/address/${auditor}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-cipher hover:underline"
-                >
-                  {shortAddr(auditor)}
-                </a>
-              ) : (
-                "—"
-              )}
-              .
-            </AlertDescription>
-          </Alert>
-        )}
-
-        <ComplianceCard />
-      </div>
-    );
-  }
-
-  // Active mode (state C): connected wallet IS the auditor.
+  // Verification panels render in BOTH preview and active modes — the V7
+  // capability spec is explicit that auditor work is "完全只读" so anyone
+  // (auditor or not) can recompute the list hash and check solvency. Only
+  // the aggregate decrypt is gated on the auditor role (the contract's
+  // FHE.allow grants reside there).
   return (
     <div className="space-y-6">
       <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
         Auditor view · {shortAddr(campaignAddress)}
       </div>
 
-      <AggregateCard
+      {!isAuditor && (
+        <Alert variant="warning">
+          <AlertTitle>
+            Preview mode · {!isConnected ? "not connected" : "not the auditor"}
+          </AlertTitle>
+          <AlertDescription>
+            {!isConnected ? (
+              <>
+                Connect a wallet to enable aggregate decryption. List-hash
+                verification and the solvency invariant remain available
+                read-only.
+              </>
+            ) : (
+              <>
+                This wallet does not hold the auditor role for this campaign.
+                You can still verify the list hash and solvency invariant
+                locally; only the aggregate claimed total is gated. Auditor
+                address:{" "}
+                {auditor ? (
+                  <a
+                    href={`${ETHERSCAN_BASE}/address/${auditor}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-cipher hover:underline"
+                  >
+                    {shortAddr(auditor)}
+                  </a>
+                ) : (
+                  "—"
+                )}
+                .
+              </>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <RecipientListHashCard campaignAddress={campaignAddress} />
+
+      <SolvencyCard
         campaignAddress={campaignAddress}
+        tokenAddress={tokenAddress}
         declaredTotal={declaredTotal}
         decimals={decimals}
         symbol={symbol}
       />
 
+      <PerClaimAuditCard
+        campaignAddress={campaignAddress}
+        decimals={decimals}
+        symbol={symbol}
+      />
+
+      {isAuditor && (
+        <AggregateCard
+          campaignAddress={campaignAddress}
+          declaredTotal={declaredTotal}
+          decimals={decimals}
+          symbol={symbol}
+        />
+      )}
+
       <ComplianceCard />
 
-      <ClaimsActivity campaignAddress={campaignAddress} />
+      {isAuditor && <ClaimsActivity campaignAddress={campaignAddress} />}
     </div>
   );
 }

@@ -11,6 +11,10 @@ import { AllocationCard } from "./AllocationCard";
 import { BalancePanel } from "./BalancePanel";
 import { ClaimStepper } from "./ClaimStepper";
 
+// V7 state enum (must match contract):
+//   0 = Setup, 1 = Finalizing, 2 = Claiming, 3 = Failed
+const STATE_FAILED = 3;
+
 /** Recipient role page · spec: docs/role-page-protocol.md §4.3
  *
  * Five UI states keyed off chain reads:
@@ -29,6 +33,16 @@ export default function RecipientPage() {
 
   const { finalized, tokenAddress } = useCampaignReads(campaignAddress);
   const { symbol, decimals } = useTokenMeta(tokenAddress);
+
+  // V7: read the explicit state enum so we can render a Failed message
+  // instead of the misleading "not finalized yet" copy when the KMS sum
+  // check failed and the campaign is terminally cancelled.
+  const { data: stateNumData } = useReadContract({
+    address: campaignAddress,
+    abi: CAMPAIGN_ABI,
+    functionName: "state",
+  });
+  const stateNum = stateNumData as number | undefined;
 
   // Per-recipient flags. All gated on a connected account.
   const {
@@ -111,11 +125,23 @@ export default function RecipientPage() {
   if (allocationSetData !== undefined && !allocationSet) {
     return (
       <Alert variant="muted">
-        <AlertTitle>Preview mode · no allocation</AlertTitle>
+        <AlertTitle>You are not on this campaign's recipient list</AlertTitle>
         <AlertDescription>
-          This wallet ({short(address)}) is not registered for this campaign.
-          Ask the admin to add you, then reload. Until then there's nothing to
-          claim from here — your wallet's token balance is on the Overview tab.
+          Wallet {short(address)} has no allocation registered. Ask the admin
+          to add you, then reload.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  // V7 · campaign cancelled by admin (Failed state).
+  if (stateNum === STATE_FAILED) {
+    return (
+      <Alert variant="destructive">
+        <AlertTitle>Campaign cancelled by admin</AlertTitle>
+        <AlertDescription>
+          The KMS sum check failed and the admin terminated this campaign.
+          Funds have been returned to the admin via <code>cancelCampaign</code>.
         </AlertDescription>
       </Alert>
     );
