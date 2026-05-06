@@ -5,7 +5,7 @@
 
 ## 2. Contract Refactor (TDD per change, each commit must keep all tests green)
 
-- [ ] 2.1 Add custom errors to `contracts/ZamaDropCampaign.sol`: `HashMismatch`, `CountMismatch`, `NotFunded`, `NoExcess`, `ExceedsExcess`
+- [x] 2.1 Add custom errors to `contracts/ZamaDropCampaign.sol`: `HashMismatch`, `CountMismatch`, `NotFunded`, `NoExcess`, `ExceedsExcess`
 - [ ] 2.2 Refactor constructor to accept `(address admin_, address auditor_, address token_, uint64 declaredTotal_, address[] memory recipients, bytes32 listHash_)`; verify `keccak256(abi.encode(recipients)) == listHash_`; store `recipientListHash` immutable; do NOT persist `recipients` array. Write 3 new tests covering: deployer ≠ admin, hash mismatch reverts, recipientListHash readable
 - [ ] 2.3 Migrate the 26 existing tests in `test/ZamaDropCampaign.test.ts` to a unified `deployCampaign(opts)` helper that builds `recipients` + `listHash` automatically. After migration, full suite must pass
 - [ ] 2.4 Add `uint64 public allocationCount` state; increment in `setAllocation` after `allocationSet[recipient] = true`. Write 1 new test asserting counter increments per call

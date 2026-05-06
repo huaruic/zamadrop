@@ -29,6 +29,12 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
     error NotClaimed();
     error AlreadyTransferred();
     error AmountMismatch();
+    // V7 invariants (constructor + state machine + escrow)
+    error HashMismatch();
+    error CountMismatch();
+    error NotFunded();
+    error NoExcess();
+    error ExceedsExcess();
 
     // ─────────────────────────────────────────────
     // 明文公开状态
