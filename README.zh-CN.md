@@ -12,7 +12,7 @@
 
 ---
 
-ZamaDrop 是一个基于 Zama fhEVM 的**机密代币分发协议**。它让项目方在 Web3 公开空投中，把 campaign 总量、人数、规则、链上状态全部公开可验证，同时把每个受益人的具体 allocation 金额加密存储于链上。资格列表不再泄露金额，campaign 仍然可审计，受益人仍然保有隐私。本项目提交至 Zama Protocol Bounty（Confidential Onchain Finance 赛道）。
+ZamaDrop 是基于 Zama fhEVM 的机密**分配金额**分发协议。每个分配金额在 setAllocation 阶段以 FHE 密文形式上链，并在密文域内累加校验总额；在 claim 时金额随 ERC-20 转账变为明文。Campaign 级事实（声明总量、受益人数、finalize 状态、领取进度）保持完全公开可验证。**接收者的成员身份在 V7 设计上是链上公开的**——资格列表不再泄露金额，但接收者集合本身可由合约事件枚举。完整隐私边界见 [`docs/SECURITY.md`](./docs/SECURITY.md#v7-privacy-boundary)。本项目提交至 Zama Protocol Bounty（Confidential Onchain Finance 赛道）。
 
 ## 问题
 

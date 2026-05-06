@@ -12,7 +12,7 @@
 
 ---
 
-ZamaDrop is a **confidential token distribution protocol** built on Zama's fhEVM. It lets a project run a fully public airdrop campaign — declared total, recipient count, rules, on-chain status — while keeping every individual recipient's allocation amount encrypted on-chain. Eligibility lists no longer leak balances. The campaign stays auditable; the recipients stay private. Submitted to the Zama Protocol Bounty (Confidential Onchain Finance track).
+ZamaDrop is a confidential **allocation amount** distribution protocol built on Zama's fhEVM. Allocation amounts are FHE-encrypted at rest and cryptographically aggregated against a declared total under encryption; they become plaintext at claim time when the ERC-20 transfer settles. Campaign-level facts (declared total, recipient count, finalize state, claim progress) stay fully public. **Recipient membership is public on-chain by design** in V7 — eligibility lists no longer leak balances, but the recipient set itself is enumerable from contract events. See [`docs/SECURITY.md`](./docs/SECURITY.md#v7-privacy-boundary) for the full privacy boundary. Submitted to the Zama Protocol Bounty (Confidential Onchain Finance track).
 
 ## The Problem
 

@@ -298,3 +298,36 @@ await campaign.write.executeTransfer([user, amount, proof]);
 - [`test/ZamaDropCampaign.test.ts`](../test/ZamaDropCampaign.test.ts) — 26 个测试，含完整性 revert
 - [`scripts/executor.ts`](../scripts/executor.ts) — 参考 executor 守护进程
 - Zama FHEVM docs — KMS verifier 接口、`makePubliclyDecryptable` 语义、`FHE.checkSignatures` 用法
+
+---
+
+## V7 Privacy Boundary
+
+### What's Protected
+
+- **Allocation-at-rest amount privacy** — `setAllocation` stores `euint64` ciphertext on-chain. Until claim, no one (including the deploying Admin, after deploy) sees individual amounts.
+- **Settlement integrity** — `FHE.checkSignatures` ensures `executeTransfer(user, amount)` cannot be forged by the off-chain executor; KMS threshold signatures are verified on-chain in `callbackFinalize` and `executeTransfer`.
+- **Aggregate privacy primitive** — Auditor decrypts `_claimedTotal` via Zama threshold KMS; individual amounts are never decrypted in the audit path.
+- **Solvency invariant** — `balance >= declaredTotal - claimedTotalPlaintext` is publicly verifiable at any time. Any observer can read `balanceOf`, `declaredTotal`, and `claimedTotalPlaintext` from chain and confirm.
+
+### What's NOT Protected
+
+- **Recipient membership privacy** — `event AllocationSet(address indexed recipient)` makes the recipient list publicly enumerable via `eth_getLogs`. Anyone can query "is wallet X a recipient of campaign Y" or list all recipients.
+- **Claim-time amount privacy** — `event TokenTransferred(address indexed user, uint64 amount)` and the underlying ERC-20 transfer broadcast the claimed amount in plaintext at claim time.
+- **Indexer convenience layer** — Our `/api/me/campaigns` endpoint is gated by SIWE, but the underlying chain data is public. SIWE prevents API abuse, not membership disclosure.
+
+### Trust Model
+
+ZamaDrop uses Zama's threshold MPC KMS for FHE decryption. The KMS is currently operated by Zama and partners (the operator set may be permissioned in the live deployment). KMS signatures verified by `FHE.checkSignatures` provide settlement integrity but do not equal a fully-trustless cryptographic guarantee.
+
+We use the term "threshold MPC parties" or "KMS nodes" rather than "validators" — KMS operators perform decryption, not consensus.
+
+### V8+ Roadmap
+
+The following protections are explicitly NOT in V7 and are tracked for V8+:
+
+- **Membership privacy** via commitments / nullifiers / Merkle-style eligibility / stealth addresses (requires contract redesign + client-side ZK circuits + ceremony)
+- **Real confidential token** (ERC-7984) once standardized on fhEVM, replacing the V7 plaintext settlement
+- **pause / cancel / time-lock** controls for operational risk during long-lived campaigns
+- **Batch setAllocation** for campaigns beyond ~50 recipients
+- **Native Safe / EIP-4337 wallet support** beyond the basic EOA wizard path
