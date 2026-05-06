@@ -38,6 +38,11 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
     error NotFunded();
     error NoExcess();
     error ExceedsExcess();
+    // V7 explicit state machine
+    error NotSetup();
+    error NotFinalizing();
+    error NotClaiming();
+    error NotFailed();
 
     // ─────────────────────────────────────────────
     // 明文公开状态
@@ -49,7 +54,13 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
     IERC20 public immutable token;
     bytes32 public immutable recipientListHash;
 
-    bool public finalized;
+    // V7: explicit lifecycle state machine.
+    //   Setup       — admin populating allocations
+    //   Finalizing  — finalize() requested KMS publicDecrypt; awaiting callbackFinalize
+    //   Claiming    — KMS confirmed the total; recipients may claim
+    //   Failed      — terminal; KMS reported sum mismatch. Recovery via cancelCampaign.
+    enum State { Setup, Finalizing, Claiming, Failed }
+    State public state;
 
     // V7: tracks how many distinct setAllocation calls succeeded; used by finalize
     // to require allocationCount == recipientCount before the FHE total check runs.
@@ -83,6 +94,8 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
     event Claimed(address indexed recipient);
     event ClaimRequested(address indexed user, bytes32 handle);
     event TokenTransferred(address indexed user, uint64 amount);
+    event ExcessWithdrawn(uint256 amount, uint256 remainingBalance);
+    event CampaignCancelled(uint256 returnedAmount);
 
     // ─────────────────────────────────────────────
     // 构造函数
@@ -136,7 +149,12 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
         bytes calldata inputProof
     ) external {
         if (msg.sender != admin) revert NotAdmin();
-        if (finalized) revert AlreadyFinalized();
+        // V7: Setup is the only state where new allocations may be added.
+        // Keep the legacy AlreadyFinalized error for the common Setup→Finalizing
+        // case to preserve client-facing semantics; other states fall through to
+        // the dedicated revert.
+        if (state == State.Finalizing || state == State.Claiming) revert AlreadyFinalized();
+        if (state != State.Setup) revert NotSetup();
         if (allocationSet[recipient]) revert AllocationAlreadySet();
 
         // 从客户端密文转为链上 euint64，验证 inputProof
@@ -167,6 +185,9 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
      */
     function finalize() external {
         if (msg.sender != admin) revert NotAdmin();
+        // V7: finalize is only valid in Setup. Re-finalize attempts and
+        // post-callback calls land here.
+        if (state != State.Setup) revert NotSetup();
         // V7: every recipient slot must have an allocation before we run the
         // FHE total check. Without this, an admin could finalize with N-1
         // allocations whose sum coincidentally matches declaredTotal.
@@ -182,6 +203,8 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
         // 标记为公开可解密，任何人可拿 handle 去 Gateway 解密
         sumCheck = FHE.makePubliclyDecryptable(sumCheck);
         finalizeCheckHandle = bytes32(ebool.unwrap(sumCheck));
+        // V7: enter Finalizing only after all preconditions pass.
+        state = State.Finalizing;
         emit FinalizeRequested(finalizeCheckHandle);
     }
 
@@ -193,17 +216,29 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
      * @param decryptionProof KMS threshold 签名的 proof（PublicDecryptResults.decryptionProof）
      */
     function callbackFinalize(bool result, bytes calldata decryptionProof) external {
+        // V7: the KMS callback is only valid in Finalizing. Replays land here.
+        if (state != State.Finalizing) revert NotFinalizing();
+
         bytes32[] memory handles = new bytes32[](1);
         handles[0] = finalizeCheckHandle;
         FHE.checkSignatures(handles, abi.encode(result), decryptionProof);
 
-        finalized = result;
+        state = result ? State.Claiming : State.Failed;
         emit Finalized(result);
     }
 
     // ─────────────────────────────────────────────
     // 受益人：查看自己的 allocation
     // ─────────────────────────────────────────────
+    /**
+     * @notice Backward-compatible boolean view of the new state machine.
+     *         Returns true iff KMS confirmed the total (state == Claiming).
+     *         Existing clients that read `.finalized()` continue to work.
+     */
+    function finalized() external view returns (bool) {
+        return state == State.Claiming;
+    }
+
     /**
      * @notice 受益人调用此函数，返回自己 allocation 的密文 handle（bytes32）。
      *         前端用 fhevmjs 的 user re-encryption 在浏览器端解密，服务器不经手明文。
@@ -222,7 +257,12 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
      *         整体原子性，任何步骤失败则整笔交易 revert。
      */
     function claim() external {
-        if (!finalized) revert NotFinalized();
+        // V7: claim only works after KMS confirmed the total (Claiming).
+        // We keep the legacy NotFinalized error for the Setup/Finalizing
+        // path so existing client code that handles "not finalized yet"
+        // does not break; Failed gets its own dedicated revert.
+        if (state == State.Failed) revert NotFailed();
+        if (state != State.Claiming) revert NotFinalized();
         if (!allocationSet[msg.sender]) revert NoAllocation();
         if (claimed[msg.sender]) revert AlreadyClaimed();
 
@@ -280,5 +320,51 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
     function requestClaimedTotalForAuditor() external view returns (bytes32) {
         if (msg.sender != auditor) revert NotAuditor();
         return bytes32(euint64.unwrap(_claimedTotal));
+    }
+
+    // ─────────────────────────────────────────────
+    // V7: 资金回收
+    // ─────────────────────────────────────────────
+    /**
+     * @notice Admin withdraws ZDT in excess of what's still owed to recipients.
+     *         The math `maxWithdraw = balance - (declaredTotal - claimedTotalPlaintext)`
+     *         protects unclaimed allocations: even if every remaining recipient
+     *         claims afterwards, the contract still has enough to pay them.
+     *
+     *         Restricted to Claiming state. In Failed state the math collapses
+     *         (claimedTotalPlaintext == 0 ⇒ maxWithdraw = 0); use cancelCampaign
+     *         for that recovery path instead.
+     */
+    function withdrawExcess(uint256 amount) external {
+        if (msg.sender != admin) revert NotAdmin();
+        if (state != State.Claiming) revert NotClaiming();
+
+        uint256 stillOwed = uint256(declaredTotal) - uint256(claimedTotalPlaintext);
+        uint256 balance = token.balanceOf(address(this));
+        if (balance <= stillOwed) revert NoExcess();
+
+        uint256 maxWithdraw = balance - stillOwed;
+        if (amount > maxWithdraw) revert ExceedsExcess();
+
+        token.safeTransfer(admin, amount);
+        emit ExcessWithdrawn(amount, balance - amount);
+    }
+
+    /**
+     * @notice Failure-path recovery. Only callable in the Failed terminal state.
+     *         Returns the contract's entire token balance to admin so a fresh
+     *         campaign can be deployed with corrected inputs. Failed implies
+     *         callbackFinalize(true) never fired, so no recipient could claim
+     *         and there is no obligation to honor.
+     */
+    function cancelCampaign() external {
+        if (msg.sender != admin) revert NotAdmin();
+        if (state != State.Failed) revert NotFailed();
+
+        uint256 balance = token.balanceOf(address(this));
+        if (balance > 0) {
+            token.safeTransfer(admin, balance);
+        }
+        emit CampaignCancelled(balance);
     }
 }
