@@ -70,7 +70,21 @@ export function SetAllocationForm({
 
   const recipientValid =
     /^0x[a-fA-F0-9]{40}$/.test(recipient.trim());
-  const amountValid = amount.trim().length > 0 && Number(amount) > 0;
+
+  // Strict bigint parsing — `Number(amount)` loses precision above 2^53 and
+  // silently accepts "5e3" / "  5  ". parseTokenAmount throws on malformed
+  // input, so we wrap it in try/catch and surface the parse error to the user
+  // when they actually submit.
+  let amountParsed: bigint | null = null;
+  let amountParseError: string | null = null;
+  if (amount.length > 0) {
+    try {
+      amountParsed = parseTokenAmount(amount, decimals);
+    } catch (err) {
+      amountParseError = err instanceof Error ? err.message : String(err);
+    }
+  }
+  const amountValid = amountParsed !== null && amountParsed > 0n;
 
   const isBusy =
     stage === "encrypting" ||
@@ -82,15 +96,14 @@ export function SetAllocationForm({
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (submitDisabled || !walletAddress) return;
+    if (submitDisabled || !walletAddress || amountParsed === null) return;
     setErrorMsg(null);
     try {
       setStage("encrypting");
-      const value = parseTokenAmount(amount, decimals);
       const { handle, proof } = await encryptUint64(
         campaignAddress,
         walletAddress,
-        value,
+        amountParsed,
       );
       setStage("awaiting-wallet");
       await writeContractAsync({
@@ -160,6 +173,11 @@ export function SetAllocationForm({
               onChange={(e) => setAmount(e.target.value)}
               disabled={disabled || isBusy}
             />
+            {amountParseError && (
+              <p className="font-mono text-[11px] text-destructive">
+                {amountParseError}
+              </p>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-3 pt-1">
