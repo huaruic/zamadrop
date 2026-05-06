@@ -20,3 +20,4 @@ frontend/test-results/
 .claude/
 .codex/
 .gemini/
+.context/
