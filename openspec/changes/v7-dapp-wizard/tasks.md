@@ -21,10 +21,10 @@
 
 ## 3. Deploy Scripts and CLI Migration
 
-- [ ] 3.1 Update `deploy/01_deploy.ts` to call new constructor signature. Recipients sourced from `RECIPIENTS` env var (comma-separated) or fallback to `[deployer.address]` for smoke runs
-- [ ] 3.2 Update `scripts/cli-setup.ts` for new constructor; replace `RECIPIENT_COUNT` env with `RECIPIENTS`; derive count from list length
-- [ ] 3.3 Update `scripts/verify-onchain.ts`, `scripts/verify-roles.ts`, `scripts/e2e-sepolia.ts` for new ABI; print `recipientListHash` and `claimedTotalPlaintext` in verification output
-- [ ] 3.4 Run end-to-end on local hardhat: `npm run compile && npm test && DECLARED_TOTAL=1000 RECIPIENTS=0x...,0x... npx hardhat run deploy/01_deploy.ts` succeeds
+- [x] 3.1 Update `deploy/01_deploy.ts` to call new constructor signature. Recipients sourced from `RECIPIENTS` env var (comma-separated) or fallback to `[deployer.address]` for smoke runs
+- [~] 3.2 Update `scripts/cli-setup.ts` for new constructor; replace `RECIPIENT_COUNT` env with `RECIPIENTS`; derive count from list length
+- [x] 3.3 Update `scripts/verify-onchain.ts`, `scripts/verify-roles.ts`, `scripts/e2e-sepolia.ts` for new ABI; print `recipientListHash` and `claimedTotalPlaintext` in verification output
+- [~] 3.4 Run end-to-end on local hardhat: `npm run compile && npm test && DECLARED_TOTAL=1000 RECIPIENTS=0x...,0x... npx hardhat run deploy/01_deploy.ts` succeeds
 
 ## 4. Backend Scaffold
 
@@ -36,21 +36,21 @@
 
 ## 5. Backend Auth and APIs
 
-- [ ] 5.1 Implement `backend/src/auth/siwe.ts`: `GET /api/auth/nonce` issues random nonce with TTL row in `siwe_nonces`; `POST /api/auth/siwe` validates nonce existence + expiry, calls `siwe.verify`, deletes nonce on success, issues JWT via `issueSession`
-- [ ] 5.2 Implement `backend/src/auth/session.ts`: `issueSession(address)` returns JWT; `requireSession` middleware extracts Bearer token, verifies, populates `req.session.address`
-- [ ] 5.3 Implement `backend/src/api/campaigns.ts` with public routes: `GET /api/campaigns?status=`, `GET /api/admin/:address/campaigns`, `GET /api/auditor/:address/campaigns`. Address comparisons case-insensitive, ordered by `created_at DESC`
-- [ ] 5.4 Add SIWE-gated `POST /api/me/campaigns` to `campaigns.ts`: joins `campaigns` × `allocations` filtered by recovered session address
-- [ ] 5.5 Implement `backend/src/api/drafts.ts` with SIWE-gated CRUD: POST creates draft owned by session address; GET/PUT/DELETE scoped to `owner_address` (return 404 not 403 on cross-owner access). PUT bumps `draft_version`. PUT writes only the whitelisted fields (camelCase → snake_case)
-- [ ] 5.6 Implement `backend/src/api/register.ts`: `POST /api/register-campaign` reads on-chain `admin()` / `auditor()` / `recipientListHash()` / `declaredTotal()` / `recipientCount()` via viem; rejects with 400 if claimed admin doesn't match chain; inserts row using chain-verified values; if `draftId` provided, updates that draft's status to `deployed`
-- [ ] 5.7 Implement `backend/src/chain/abi.ts` with the minimum read ABI for the V7 contract (admin, auditor, recipientListHash, declaredTotal, recipientCount, claimedTotalPlaintext, finalized)
-- [ ] 5.8 Add unit tests for siwe nonce flow, drafts owner scoping, register-campaign chain mismatch rejection (use mocked viem reads)
+- [x] 5.1 Implement `backend/src/auth/siwe.ts`: `GET /api/auth/nonce` issues random nonce with TTL row in `siwe_nonces`; `POST /api/auth/siwe` validates nonce existence + expiry, calls `siwe.verify`, deletes nonce on success, issues JWT via `issueSession`
+- [x] 5.2 Implement `backend/src/auth/session.ts`: `issueSession(address)` returns JWT; `requireSession` middleware extracts Bearer token, verifies, populates `req.session.address`
+- [x] 5.3 Implement `backend/src/api/campaigns.ts` with public routes: `GET /api/campaigns?status=`, `GET /api/admin/:address/campaigns`, `GET /api/auditor/:address/campaigns`. Address comparisons case-insensitive, ordered by `created_at DESC`
+- [x] 5.4 Add SIWE-gated `POST /api/me/campaigns` to `campaigns.ts`: joins `campaigns` × `allocations` filtered by recovered session address
+- [x] 5.5 Implement `backend/src/api/drafts.ts` with SIWE-gated CRUD: POST creates draft owned by session address; GET/PUT/DELETE scoped to `owner_address` (return 404 not 403 on cross-owner access). PUT bumps `draft_version`. PUT writes only the whitelisted fields (camelCase → snake_case)
+- [x] 5.6 Implement `backend/src/api/register.ts`: `POST /api/register-campaign` reads on-chain `admin()` / `auditor()` / `recipientListHash()` / `declaredTotal()` / `recipientCount()` via viem; rejects with 400 if claimed admin doesn't match chain; inserts row using chain-verified values; if `draftId` provided, updates that draft's status to `deployed`
+- [x] 5.7 Implement `backend/src/chain/abi.ts` with the minimum read ABI for the V7 contract (admin, auditor, recipientListHash, declaredTotal, recipientCount, claimedTotalPlaintext, finalized)
+- [x] 5.8 Add unit tests for siwe nonce flow, drafts owner scoping, register-campaign chain mismatch rejection (use mocked viem reads)
 
 ## 6. Backend Indexer Worker
 
-- [ ] 6.1 Implement `backend/src/indexer/worker.ts`: `runIndexer()` polls every 12s; reads `kv_state['indexer.last_block']`; fetches all known campaign addresses from `campaigns` table; calls `getLogs` for `AllocationSet`, `Finalized`, `Claimed`, `TokenTransferred` events in (lastBlock, tip] range
-- [ ] 6.2 Implement event handlers per `indexer-service` spec: AllocationSet → INSERT into `allocations` ON CONFLICT DO NOTHING; Finalized(true) → UPDATE campaign state to `claiming`; Claimed → UPSERT into `claims`; TokenTransferred → UPDATE `claims.amount` and `transferred_at_block`
-- [ ] 6.3 Persist `kv_state['indexer.last_block']` after each successful tick. Wire `runIndexer()` into `backend/src/server.ts` boot
-- [ ] 6.4 Smoke test: deploy a campaign on local hardhat or Sepolia, register via API, run worker, verify `allocations` and `claims` rows appear after corresponding events
+- [x] 6.1 Implement `backend/src/indexer/worker.ts`: `runIndexer()` polls every 12s; reads `kv_state['indexer.last_block']`; fetches all known campaign addresses from `campaigns` table; calls `getLogs` for `AllocationSet`, `Finalized`, `Claimed`, `TokenTransferred` events in (lastBlock, tip] range
+- [x] 6.2 Implement event handlers per `indexer-service` spec: AllocationSet → INSERT into `allocations` ON CONFLICT DO NOTHING; Finalized(true) → UPDATE campaign state to `claiming`; Claimed → UPSERT into `claims`; TokenTransferred → UPDATE `claims.amount` and `transferred_at_block`
+- [x] 6.3 Persist `kv_state['indexer.last_block']` after each successful tick. Wire `runIndexer()` into `backend/src/server.ts` boot
+- [~] 6.4 Smoke test: deploy a campaign on local hardhat or Sepolia, register via API, run worker, verify `allocations` and `claims` rows appear after corresponding events
 
 ## 7. Frontend Crypto Utilities
 
@@ -74,14 +74,14 @@
 
 ## 9. Frontend Auth and Pages
 
-- [ ] 9.1 Install `siwe`. Implement `frontend/src/auth/siwe-client.ts` (`siweLogin`, `getSessionToken`, `clearSession`) per `recipient-discovery` spec. Token persisted to localStorage; signature flow uses wagmi's `useSignMessage`
-- [ ] 9.2 Implement `frontend/src/auth/SiweButton.tsx` rendering Sign in / Sign out states. Acceptance: clicking triggers wallet sign prompt; success persists token; sign out clears it
-- [ ] 9.3 Implement `frontend/src/pages/Home.tsx`: section the campaign list by role (deployed / received / audited). "Deployed" and "audited" use public APIs without SIWE; "received" uses SIWE-gated `/api/me/campaigns` and only shows when session present. Acceptance: address with mixed roles sees all 3 sections populated; same address without SIWE sees only deployed + audited
-- [ ] 9.4 Implement `frontend/src/pages/CampaignDetail.tsx` at `/c/:address`: read `admin()` and `auditor()` from chain, compute effective role, dispatch to AdminPage / RecipientPage / AuditorPage / PublicView. URL `?role=` is hint only; actual role determined by chain reads + connected wallet. Persist campaign address to `localStorage.zd:knownCampaigns`. Acceptance: visiting `/c/0xCAMP?role=admin` with non-admin wallet shows public view, not admin powers
-- [ ] 9.5 Update existing `frontend/src/pages/admin/AdminPage.tsx`: add "Withdraw excess" UI calling `withdrawExcess(amount)`; show `claimedTotalPlaintext`, `balanceOf`, and `recipientListHash` (read-only badges). Acceptance: Admin can withdraw 100 ZDT excess in a test scenario
-- [ ] 9.6 Implement / update `frontend/src/pages/recipient/RecipientPage.tsx`: `requestMyAllocation()` → relayer SDK user-decrypt → display amount. Show claim button conditionally on finalized + not yet claimed. After claim, show pending then transferred state. Acceptance: full recipient flow on local hardhat completes and balance updates
-- [ ] 9.7 Implement / update `frontend/src/pages/auditor/AuditorPage.tsx` per `auditor-verification` spec: read-only metadata display; "Verify list hash" button (fetches AllocationSet events, recomputes keccak, compares to `recipientListHash`); solvency invariant displayed; per-claim KMS signature verification with ✅/❌; "Decrypt aggregate claimed total" button using relayer SDK. Acceptance: auditor view has zero on-chain mutating actions
-- [ ] 9.8 Implement `frontend/src/pages/PublicView.tsx`: show metadata + progress bar (claimedTotalPlaintext / declaredTotal). No interactions
+- [x] 9.1 Install `siwe`. Implement `frontend/src/auth/siwe-client.ts` (`siweLogin`, `getSessionToken`, `clearSession`) per `recipient-discovery` spec. Token persisted to localStorage; signature flow uses wagmi's `useSignMessage`
+- [x] 9.2 Implement `frontend/src/auth/SiweButton.tsx` rendering Sign in / Sign out states. Acceptance: clicking triggers wallet sign prompt; success persists token; sign out clears it
+- [x] 9.3 Implement `frontend/src/pages/Home.tsx`: section the campaign list by role (deployed / received / audited). "Deployed" and "audited" use public APIs without SIWE; "received" uses SIWE-gated `/api/me/campaigns` and only shows when session present. Acceptance: address with mixed roles sees all 3 sections populated; same address without SIWE sees only deployed + audited
+- [x] 9.4 Implement `frontend/src/pages/CampaignDetail.tsx` at `/c/:address`: read `admin()` and `auditor()` from chain, compute effective role, dispatch to AdminPage / RecipientPage / AuditorPage / PublicView. URL `?role=` is hint only; actual role determined by chain reads + connected wallet. Persist campaign address to `localStorage.zd:knownCampaigns`. Acceptance: visiting `/c/0xCAMP?role=admin` with non-admin wallet shows public view, not admin powers
+- [x] 9.5 Update existing `frontend/src/pages/admin/AdminPage.tsx`: add "Withdraw excess" UI calling `withdrawExcess(amount)`; show `claimedTotalPlaintext`, `balanceOf`, and `recipientListHash` (read-only badges). Acceptance: Admin can withdraw 100 ZDT excess in a test scenario
+- [x] 9.6 Implement / update `frontend/src/pages/recipient/RecipientPage.tsx`: `requestMyAllocation()` → relayer SDK user-decrypt → display amount. Show claim button conditionally on finalized + not yet claimed. After claim, show pending then transferred state. Acceptance: full recipient flow on local hardhat completes and balance updates
+- [x] 9.7 Implement / update `frontend/src/pages/auditor/AuditorPage.tsx` per `auditor-verification` spec: read-only metadata display; "Verify list hash" button (fetches AllocationSet events, recomputes keccak, compares to `recipientListHash`); solvency invariant displayed; per-claim KMS signature verification with ✅/❌; "Decrypt aggregate claimed total" button using relayer SDK. Acceptance: auditor view has zero on-chain mutating actions
+- [x] 9.8 Implement `frontend/src/pages/PublicView.tsx`: show metadata + progress bar (claimedTotalPlaintext / declaredTotal). No interactions
 
 ## 10. Documentation Updates
 
