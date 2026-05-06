@@ -11,6 +11,11 @@ export const CAMPAIGN_ABI = [
   { type: "function", name: "finalized", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
   { type: "function", name: "token", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "finalizeCheckHandle", stateMutability: "view", inputs: [], outputs: [{ type: "bytes32" }] },
+  // V7 reads
+  { type: "function", name: "state", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
+  { type: "function", name: "claimedTotalPlaintext", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
+  { type: "function", name: "recipientListHash", stateMutability: "view", inputs: [], outputs: [{ type: "bytes32" }] },
+  { type: "function", name: "allocationCount", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
   { type: "function", name: "allocationSet", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "bool" }] },
   { type: "function", name: "claimed", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "bool" }] },
   { type: "function", name: "transferred", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "bool" }] },
@@ -29,6 +34,9 @@ export const CAMPAIGN_ABI = [
   { type: "function", name: "claim", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "executeTransfer", stateMutability: "nonpayable",
     inputs: [{ type: "address", name: "user" }, { type: "uint64", name: "amount" }, { type: "bytes", name: "decryptionProof" }], outputs: [] },
+  { type: "function", name: "withdrawExcess", stateMutability: "nonpayable",
+    inputs: [{ type: "uint256", name: "amount" }], outputs: [] },
+  { type: "function", name: "cancelCampaign", stateMutability: "nonpayable", inputs: [], outputs: [] },
 
   // 事件
   { type: "event", name: "AllocationSet", inputs: [{ type: "address", indexed: true, name: "recipient" }] },
@@ -37,6 +45,8 @@ export const CAMPAIGN_ABI = [
   { type: "event", name: "Claimed", inputs: [{ type: "address", indexed: true, name: "recipient" }] },
   { type: "event", name: "ClaimRequested", inputs: [{ type: "address", indexed: true, name: "user" }, { type: "bytes32", indexed: false, name: "handle" }] },
   { type: "event", name: "TokenTransferred", inputs: [{ type: "address", indexed: true, name: "user" }, { type: "uint64", indexed: false, name: "amount" }] },
+  { type: "event", name: "ExcessWithdrawn", inputs: [{ type: "uint256", indexed: false, name: "amount" }, { type: "uint256", indexed: false, name: "remainingBalance" }] },
+  { type: "event", name: "CampaignCancelled", inputs: [{ type: "uint256", indexed: false, name: "returnedAmount" }] },
 ] as const;
 
 export const ERC20_ABI = [

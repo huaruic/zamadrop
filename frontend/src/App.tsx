@@ -3,9 +3,10 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { PageLayout } from "@/components/PageLayout";
 import AdminPage from "@/pages/admin/AdminPage";
 import AuditorPage from "@/pages/auditor/AuditorPage";
+import CampaignDetail from "@/pages/CampaignDetail";
 import CampaignLayout from "@/pages/CampaignLayout";
 import CampaignOverview from "@/pages/CampaignOverview";
-import PublicHome from "@/pages/PublicHome";
+import Home from "@/pages/Home";
 import RecipientPage from "@/pages/recipient/RecipientPage";
 
 export default function App() {
@@ -13,7 +14,12 @@ export default function App() {
     <BrowserRouter>
       <PageLayout>
         <Routes>
-          <Route path="/" element={<PublicHome />} />
+          {/* V7 home + role-aware detail routes */}
+          <Route path="/" element={<Home />} />
+          <Route path="/c/:address" element={<CampaignDetail />} />
+
+          {/* V6 routes preserved so existing /campaign/:address links keep
+              working alongside the new /c/:address dispatcher. */}
           <Route path="/campaign/:address" element={<CampaignLayout />}>
             <Route index element={<CampaignOverview />} />
             <Route path="admin" element={<AdminPage />} />
