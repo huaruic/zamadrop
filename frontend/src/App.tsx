@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { PageLayout } from "@/components/PageLayout";
 import AdminPage from "@/pages/admin/AdminPage";
@@ -8,6 +8,12 @@ import CampaignLayout from "@/pages/CampaignLayout";
 import CampaignOverview from "@/pages/CampaignOverview";
 import Home from "@/pages/Home";
 import RecipientPage from "@/pages/recipient/RecipientPage";
+import Step1Basics from "@/pages/wizard/Step1Basics";
+import Step2Recipients from "@/pages/wizard/Step2Recipients";
+import Step3Auditor from "@/pages/wizard/Step3Auditor";
+import Step4Review from "@/pages/wizard/Step4Review";
+import Step5Deploy from "@/pages/wizard/Step5Deploy";
+import WizardLayout from "@/pages/wizard/WizardLayout";
 
 export default function App() {
   return (
@@ -17,6 +23,16 @@ export default function App() {
           {/* V7 home + role-aware detail routes */}
           <Route path="/" element={<Home />} />
           <Route path="/c/:address" element={<CampaignDetail />} />
+
+          {/* V7 deployment wizard — 5 nested steps under /wizard. */}
+          <Route path="/wizard" element={<WizardLayout />}>
+            <Route index element={<Navigate to="basics" replace />} />
+            <Route path="basics" element={<Step1Basics />} />
+            <Route path="recipients" element={<Step2Recipients />} />
+            <Route path="auditor" element={<Step3Auditor />} />
+            <Route path="review" element={<Step4Review />} />
+            <Route path="deploy" element={<Step5Deploy />} />
+          </Route>
 
           {/* V6 routes preserved so existing /campaign/:address links keep
               working alongside the new /c/:address dispatcher. */}
