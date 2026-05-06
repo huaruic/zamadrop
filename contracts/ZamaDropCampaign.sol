@@ -48,6 +48,10 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
 
     bool public finalized;
 
+    // V7: tracks how many distinct setAllocation calls succeeded; used by finalize
+    // to require allocationCount == recipientCount before the FHE total check runs.
+    uint64 public allocationCount;
+
     mapping(address => bool) public allocationSet;
     mapping(address => bool) public claimed;
     mapping(address => bytes32) public pendingClaimHandle;
@@ -141,6 +145,8 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
         FHE.allowThis(_runningTotal);
 
         allocationSet[recipient] = true;
+        // V7: bump after the dedupe flag so a revert above does not increment.
+        allocationCount += 1;
         emit AllocationSet(recipient);
     }
 
@@ -154,6 +160,13 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
      */
     function finalize() external {
         if (msg.sender != admin) revert NotAdmin();
+        // V7: every recipient slot must have an allocation before we run the
+        // FHE total check. Without this, an admin could finalize with N-1
+        // allocations whose sum coincidentally matches declaredTotal.
+        if (allocationCount != recipientCount) revert CountMismatch();
+        // V7: escrow must already cover declaredTotal. Catches the silent
+        // failure where claim() succeeds but executeTransfer reverts later.
+        if (token.balanceOf(address(this)) < declaredTotal) revert NotFunded();
 
         // 在密文状态下验证：runningTotal == declaredTotal
         euint64 encDeclared = FHE.asEuint64(declaredTotal);

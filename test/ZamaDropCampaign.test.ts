@@ -228,6 +228,18 @@ describe("ZamaDropCampaign", function () {
       ).to.be.revertedWithCustomError(contract, "AllocationAlreadySet");
     });
 
+    it("allocationCount 每次 setAllocation 后递增", async function () {
+      expect(await contract.allocationCount()).to.equal(0n);
+
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      expect(await contract.allocationCount()).to.equal(1n);
+
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+      expect(await contract.allocationCount()).to.equal(2n);
+    });
+
     it("finalize 之后不可再设置 allocation", async function () {
       // 设置所有 allocation
       const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
@@ -288,6 +300,59 @@ describe("ZamaDropCampaign", function () {
       await expect(
         contract.connect(other).finalize()
       ).to.be.revertedWithCustomError(contract, "NotAdmin");
+    });
+
+    it("allocationCount != recipientCount 时 finalize 以 CountMismatch revert", async function () {
+      // 只设置 1 个 recipient（recipientCount = 2）
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+
+      await expect(
+        contract.connect(admin).finalize()
+      ).to.be.revertedWithCustomError(contract, "CountMismatch");
+    });
+
+    it("allocationCount == recipientCount 时 finalize 通过 count 检查继续到 FHE 阶段", async function () {
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await expect(contract.connect(admin).finalize()).to.not.be.reverted;
+      // FinalizeRequested 事件已发出，handle 不为零
+      expect(await contract.finalizeCheckHandle()).to.not.equal(
+        "0x0000000000000000000000000000000000000000000000000000000000000000"
+      );
+    });
+
+    it("escrow 不足时 finalize 以 NotFunded revert", async function () {
+      // 部署一个不注资的 campaign
+      const { campaign, campaignAddress } = await deployCampaign({
+        admin,
+        auditor,
+        recipients: [recipient1.address, recipient2.address],
+        declaredTotal: DECLARED_TOTAL,
+        fundEscrow: false,
+      });
+
+      const { handle: h1, proof: p1 } = await encryptAmount(campaignAddress, admin.address, ALLOC_1);
+      await campaign.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(campaignAddress, admin.address, ALLOC_2);
+      await campaign.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await expect(
+        campaign.connect(admin).finalize()
+      ).to.be.revertedWithCustomError(campaign, "NotFunded");
+    });
+
+    it("escrow 恰好等于 declaredTotal 时 finalize 通过 NotFunded 检查", async function () {
+      // 默认 helper 已注资 declaredTotal
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await expect(contract.connect(admin).finalize()).to.not.be.reverted;
     });
 
     it("KMS proof 校验下，任何账户都可提交 callbackFinalize（信任根是签名而非身份）", async function () {
