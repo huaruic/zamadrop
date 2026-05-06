@@ -240,6 +240,20 @@ describe("ZamaDropCampaign", function () {
       expect(await contract.allocationCount()).to.equal(2n);
     });
 
+    it("Finalizing 状态下（callback 未到）setAllocation 应 revert AlreadyFinalized", async function () {
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await contract.connect(admin).finalize(); // → Finalizing，未回调
+
+      const { handle: h3, proof: p3 } = await encryptAmount(contractAddress, admin.address, 50n);
+      await expect(
+        contract.connect(admin).setAllocation(other.address, h3, p3)
+      ).to.be.revertedWithCustomError(contract, "AlreadyFinalized");
+    });
+
     it("finalize 之后不可再设置 allocation", async function () {
       // 设置所有 allocation
       const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
@@ -720,6 +734,23 @@ describe("ZamaDropCampaign", function () {
       await expect(
         contract.connect(recipient1).claim()
       ).to.be.revertedWithCustomError(contract, "NotFinalized");
+    });
+
+    it("Failed 状态下 setAllocation 应 revert NotSetup", async function () {
+      // 配错 allocation 让 callback 解出 false → Failed
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+      await contract.connect(admin).finalize();
+      const handle = await contract.finalizeCheckHandle();
+      const { ebool: result, decryptionProof } = await publicDecryptWithProof(handle);
+      await contract.connect(admin).callbackFinalize(result, decryptionProof);
+
+      const { handle: h3, proof: p3 } = await encryptAmount(contractAddress, admin.address, 100n);
+      await expect(
+        contract.connect(admin).setAllocation(other.address, h3, p3)
+      ).to.be.revertedWithCustomError(contract, "NotSetup");
     });
 
     it("Failed 状态下 claim 应 revert（NotFailed）", async function () {
