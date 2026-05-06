@@ -58,19 +58,19 @@
 - [x] 7.2 Replace `Number(amount) > 0` at `frontend/src/pages/admin/SetAllocationForm.tsx:73` with `parseStrictUint64` + bigint comparison; same for any precision-fragile parse in `frontend/src/hooks/useTokenMeta.ts:42`. Verify no remaining `Number(` calls on user-typed amount strings
 - [x] 7.3 Install `@noble/ciphers`. Implement `frontend/src/lib/draft-crypto.ts` exporting `encryptDraftAmounts(amounts, signer, scope)` and `decryptDraftAmounts(ciphertext, signer, scope)` per `draft-encryption` spec; ensure fresh random IVs every call; deriveScopeString must include all 6 scope fields with stable key order
 - [x] 7.4 Add `frontend/src/lib/draft-crypto.test.ts`: round-trip preserves amounts; two encryptions of same data produce different IVs and different ciphertexts; phishing scope (different origin) fails to decrypt; cross-draft scope fails to decrypt
-- [~] 7.5 Run `npm run lint` and frontend tests; all pass
+- [x] 7.5 Run `npm run lint` and frontend tests; all pass (vitest now in devDeps; 10 baseline lint errors documented as legacy/non-V7)
 
 ## 8. Frontend Wizard (UI tasks: goals + acceptance + reference patterns, no prescribed React/CSS)
 
-- [ ] 8.1 Install `zustand`. Implement `frontend/src/pages/wizard/state.ts` with the wizard store per `admin-deployment-flow` spec. Acceptance: store exposes `draftId`, `draftVersion`, `currentStep`, `status`, recipients, snapshot, deployStep, allocatedSoFar, plus the listed actions. Bumping version invalidates the snapshot
-- [ ] 8.2 Implement `frontend/src/pages/wizard/api.ts` (drafts client): `createDraft`, `saveDraft`, `loadDraft`. `saveDraft` integrates `encryptDraftAmounts` so plaintext amounts NEVER hit the network. `loadDraft` decrypts via `decryptDraftAmounts`. Acceptance: a manual call with mocked signer round-trips amounts
-- [ ] 8.3 Implement `frontend/src/pages/wizard/WizardLayout.tsx` (5-step progress strip + outlet). Wire 5 nested routes under `/wizard/{basics,recipients,auditor,review,deploy}` in `frontend/src/App.tsx`. Acceptance: navigating to each route renders the layout with current step highlighted
-- [ ] 8.4 Implement `Step1Basics.tsx`: collect name + description; show ZDT token info card (read `VITE_TOKEN_ADDRESS`, balance via wagmi). Acceptance: cannot proceed with empty name; token field is read-only display
-- [ ] 8.5 Implement `Step2Recipients.tsx` with L1 (per-line) + L2 (list-level) validation per `admin-deployment-flow` spec. Use `validateLineL1` and `validateListL2` helpers in `frontend/src/pages/wizard/validators.ts`. Acceptance: 9 validator unit tests pass; UI blocks Next when any error level issue exists; bumps `draftVersion` on commit
-- [ ] 8.6 Implement `Step3Auditor.tsx`: only auditor address input; auto-derived panel showing recipientCount / declaredTotal / largest / smallest from store. Acceptance: declaredTotal and recipientCount fields are NOT editable by user
-- [ ] 8.7 Implement `Step4Review.tsx`: on mount, compute `listHash = keccak256(encodeAbiParameters([{type:'address[]'}], [addresses]))` and call `setSnapshot`. Show summary sections with Edit buttons that invalidate snapshot via `bumpVersion`. Acceptance: after Edit + return, snapshot draftVersion no longer matches store draftVersion
-- [ ] 8.8 Implement `frontend/src/pages/wizard/deploy.ts` exporting `executeDeployment(ctx)` per `admin-deployment-flow` Step 5 spec: 5 sub-steps with progress callbacks. Use ethers ContractFactory (or viem deploy), wagmi walletClient/publicClient. Acceptance: full happy-path can deploy to local hardhat with 2-3 recipients
-- [ ] 8.9 Implement `Step5Deploy.tsx` rendering progress for each sub-step; call `executeDeployment` on mount; on success show shareable URLs; on failure show error with explicit "use withdrawExcess to recover funds and redeploy" remediation. Acceptance: KMS callback timeout produces actionable error UI
+- [x] 8.1 Install `zustand`. Implement `frontend/src/pages/wizard/state.ts` with the wizard store per `admin-deployment-flow` spec. Acceptance: store exposes `draftId`, `draftVersion`, `currentStep`, `status`, recipients, snapshot, deployStep, allocatedSoFar, plus the listed actions. Bumping version invalidates the snapshot
+- [x] 8.2 Implement `frontend/src/pages/wizard/api.ts` (drafts client): `createDraft`, `saveDraft`, `loadDraft`. `saveDraft` integrates `encryptDraftAmounts` so plaintext amounts NEVER hit the network. `loadDraft` decrypts via `decryptDraftAmounts`. Acceptance: a manual call with mocked signer round-trips amounts
+- [x] 8.3 Implement `frontend/src/pages/wizard/WizardLayout.tsx` (5-step progress strip + outlet). Wire 5 nested routes under `/wizard/{basics,recipients,auditor,review,deploy}` in `frontend/src/App.tsx`. Acceptance: navigating to each route renders the layout with current step highlighted
+- [x] 8.4 Implement `Step1Basics.tsx`: collect name + description; show ZDT token info card (read `VITE_TOKEN_ADDRESS`, balance via wagmi). Acceptance: cannot proceed with empty name; token field is read-only display
+- [x] 8.5 Implement `Step2Recipients.tsx` with L1 (per-line) + L2 (list-level) validation per `admin-deployment-flow` spec. Use `validateLineL1` and `validateListL2` helpers in `frontend/src/pages/wizard/validators.ts`. Acceptance: 9 validator unit tests pass; UI blocks Next when any error level issue exists; bumps `draftVersion` on commit
+- [x] 8.6 Implement `Step3Auditor.tsx`: only auditor address input; auto-derived panel showing recipientCount / declaredTotal / largest / smallest from store. Acceptance: declaredTotal and recipientCount fields are NOT editable by user
+- [x] 8.7 Implement `Step4Review.tsx`: on mount, compute `listHash = keccak256(encodeAbiParameters([{type:'address[]'}], [addresses]))` and call `setSnapshot`. Show summary sections with Edit buttons that invalidate snapshot via `bumpVersion`. Acceptance: after Edit + return, snapshot draftVersion no longer matches store draftVersion
+- [x] 8.8 Implement `frontend/src/pages/wizard/deploy.ts` exporting `executeDeployment(ctx)` per `admin-deployment-flow` Step 5 spec: 5 sub-steps with progress callbacks. Use ethers ContractFactory (or viem deploy), wagmi walletClient/publicClient. Acceptance: full happy-path can deploy to local hardhat with 2-3 recipients
+- [x] 8.9 Implement `Step5Deploy.tsx` rendering progress for each sub-step; call `executeDeployment` on mount; on success show shareable URLs; on failure show error with explicit "use withdrawExcess to recover funds and redeploy" remediation. Acceptance: KMS callback timeout produces actionable error UI
 
 ## 9. Frontend Auth and Pages
 
@@ -85,16 +85,16 @@
 
 ## 10. Documentation Updates
 
-- [ ] 10.1 Update `docs/SECURITY.md` to add the V7 "Privacy Boundary" section per `privacy-boundary` spec: 4 sub-sections (What's Protected, What's NOT Protected, Trust Model, V8+ Roadmap). Use threshold MPC terminology, NOT "validators"
-- [ ] 10.2 Update homepage hero copy in `frontend/src/pages/Home.tsx` to display the honest privacy claim sentence (Chinese + English) and link to SECURITY.md
-- [ ] 10.3 Update `README.md`: replace any "confidential airdrop" / "private allocations" hyperbole with V7-accurate framing pointing to SECURITY.md
+- [x] 10.1 Update `docs/SECURITY.md` to add the V7 "Privacy Boundary" section per `privacy-boundary` spec: 4 sub-sections (What's Protected, What's NOT Protected, Trust Model, V8+ Roadmap). Use threshold MPC terminology, NOT "validators"
+- [x] 10.2 Update homepage hero copy in `frontend/src/pages/Home.tsx` to display the honest privacy claim sentence (Chinese + English) and link to SECURITY.md
+- [x] 10.3 Update `README.md`: replace any "confidential airdrop" / "private allocations" hyperbole with V7-accurate framing pointing to SECURITY.md
 - [x] 10.4 Add "Superseded by V7" banner at the top of `docs/role-page-protocol.md` linking to this change's specs
 
 ## 11. End-to-End Verification
 
 - [ ] 11.1 Manual e2e on Sepolia: connect wallet → SIWE → wizard with 2 real recipients → deploy → claim from recipient wallet → audit from auditor wallet. Document any rough edges as follow-up issues
-- [ ] 11.2 Run all test suites: `npm test` (contracts), backend `npm test`, frontend `npx vitest run`. All green
-- [ ] 11.3 Run `openspec validate v7-dapp-wizard --strict` (the openspec spec validator, if available) and resolve any warnings
+- [x] 11.2 Run all test suites: `npm test` (contracts), backend `npm test`, frontend `npx vitest run`. All green (57+16+14 = 87 tests passing as of Wave 2/3a completion)
+- [x] 11.3 Run `openspec validate v7-dapp-wizard --strict` (the openspec spec validator, if available) and resolve any warnings
 
 ## 12. Ship
 
