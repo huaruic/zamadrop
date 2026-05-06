@@ -155,8 +155,11 @@ export default function Home() {
             list) is public on-chain.
           </p>
           <p>
+            {/* GitHub blob URL — docs/ isn't shipped to the Vite public dir,
+                so a relative `/docs/SECURITY.md` would 404. Linking to the
+                source-of-truth file in the repo keeps the claim verifiable. */}
             <a
-              href="/docs/SECURITY.md"
+              href="https://github.com/huaruic/zamadrop/blob/main/docs/SECURITY.md"
               target="_blank"
               rel="noreferrer"
               className="text-cipher hover:underline"
