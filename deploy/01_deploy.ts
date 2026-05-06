@@ -31,15 +31,28 @@ async function main() {
   const nonEmpty = (v?: string) => (v && v.trim() !== "" ? v : undefined);
 
   const declaredTotal = BigInt(nonEmpty(process.env.DECLARED_TOTAL) ?? "1000");
-  const recipientCount = BigInt(nonEmpty(process.env.RECIPIENT_COUNT) ?? "2");
   const auditorAddress = nonEmpty(process.env.AUDITOR_ADDRESS) ?? deployer.address;
   const existingToken = nonEmpty(process.env.EXISTING_TOKEN_ADDRESS);
 
+  // V7 constructor takes the recipient list directly (hash committed on-chain,
+  // list itself stays off-chain). RECIPIENTS is a comma-separated address list;
+  // for smoke runs we fall back to a single-recipient list of [deployer].
+  const recipientsRaw = nonEmpty(process.env.RECIPIENTS);
+  const recipients = recipientsRaw
+    ? recipientsRaw.split(",").map((s) => ethers.getAddress(s.trim()))
+    : [deployer.address];
+  const recipientCount = recipients.length;
+  const listHash = ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(["address[]"], [recipients]),
+  );
+
   console.log("=== ZamaDrop Deployment ===");
-  console.log("Deployer (admin):", deployer.address);
+  console.log("Deployer:        ", deployer.address);
+  console.log("Admin:           ", deployer.address, "(deployer)");
   console.log("Auditor:         ", auditorAddress);
   console.log("Declared total:  ", declaredTotal.toString());
-  console.log("Recipient count: ", recipientCount.toString());
+  console.log("Recipient count: ", recipientCount);
+  console.log("Recipient list hash:", listHash);
   console.log("");
 
   // 1. Deploy MockToken（如果环境变量提供了已存在的地址，复用以节省 gas）
@@ -62,17 +75,20 @@ async function main() {
     console.log("MockToken deployed at:        ", tokenAddress);
   }
 
-  // 2. Deploy ZamaDropCampaign with token address
+  // 2. Deploy ZamaDropCampaign with V7 constructor signature
   const Campaign = await ethers.getContractFactory("ZamaDropCampaign");
   const campaign = await Campaign.deploy(
-    declaredTotal,
-    recipientCount,
-    auditorAddress,
-    tokenAddress,
+    deployer.address, // admin_
+    auditorAddress, // auditor_
+    tokenAddress, // token_
+    declaredTotal, // declaredTotal_
+    recipients, // address[]
+    listHash, // bytes32
   );
   await campaign.waitForDeployment();
   const campaignAddress = await campaign.getAddress();
   console.log("ZamaDropCampaign deployed at: ", campaignAddress);
+  console.log("  recipientListHash:          ", await campaign.recipientListHash());
 
   // 3. Admin transfers declaredTotal tokens to campaign as escrow
   const adminBalance = await token.balanceOf(deployer.address);
