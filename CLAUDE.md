@@ -12,7 +12,7 @@ enforces the campaign total in ciphertext, so the campaign is publicly
 verifiable while individual amounts remain private.
 
 For full product context see [`README.md`](./README.md) and
-[`docs/prd.en.md`](./docs/prd.en.md).
+[`docs/product/prd.en.md`](./docs/product/prd.en.md).
 
 ## Tech Stack
 
@@ -82,3 +82,7 @@ npm run lint
 - ERC-7984 confidential token type (stretch goal)
 - Hiding the public "has-claimed" boolean
 - CSV bulk import
+
+## Scratch Output Policy
+
+Do not create agent-specific planning folders under `docs/`, including `docs/superpowers/` (now .gitignore'd). If a planning or brainstorming tool wants to write there, redirect durable content into `openspec/changes/<change-id>/` as proposal/design/tasks/specs. Keep disposable notes in `.private/` only. See AGENTS.md "文档落点规则" for the canonical mapping.

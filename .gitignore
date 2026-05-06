@@ -21,3 +21,6 @@ frontend/test-results/
 .codex/
 .gemini/
 .context/
+
+# Agent-generated scratch docs; promote durable content into OpenSpec/ADR first.
+docs/superpowers/

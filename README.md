@@ -142,7 +142,7 @@ npm run e2e:ui-regression            # no-wallet UI smoke tests (role boundaries
 npm run e2e:ui                       # interactive Playwright UI
 ```
 
-See [`docs/metamask-automation-plan.md`](./docs/metamask-automation-plan.md) for the full strategy and [`docs/role-boundary-test-strategy.md`](./docs/role-boundary-test-strategy.md) for the layered test plan.
+See [`test/TEST_PLAN.md`](./test/TEST_PLAN.md) for the canonical test strategy, including Hardhat coverage, no-wallet UI smoke, and the Synpress + Playwright wallet E2E plan.
 
 ## Project Structure
 
@@ -188,12 +188,12 @@ The encryption-side guarantees are unchanged: per-recipient allocations are stri
 
 ## Documentation
 
-- [`docs/prd.md`](./docs/prd.md) — Product requirements (Chinese)
-- [`docs/prd.en.md`](./docs/prd.en.md) — Product requirements (English)
+- [`docs/product/prd.zh-CN.md`](./docs/product/prd.zh-CN.md) — Product requirements (Chinese)
+- [`docs/product/prd.en.md`](./docs/product/prd.en.md) — Product requirements (English)
 - [`docs/SECURITY.md`](./docs/SECURITY.md) — Trust model, threat analysis, KMS verification, v1 hardening roadmap
 - [`docs/role-page-protocol.md`](./docs/role-page-protocol.md) — Five-layer role model and V6 capability-tab frontend protocol
-- [`docs/deploy.md`](./docs/deploy.md) — Sepolia deployment guide
-- [`docs/metamask-automation-plan.md`](./docs/metamask-automation-plan.md) — Synpress + Playwright wallet automation
+- [`docs/RUNBOOKS/sepolia-deploy.md`](./docs/RUNBOOKS/sepolia-deploy.md) — Sepolia deployment runbook
+- [`test/TEST_PLAN.md`](./test/TEST_PLAN.md) — Canonical test strategy (Hardhat, UI smoke, Synpress + Playwright wallet E2E)
 
 ## Contributing
 

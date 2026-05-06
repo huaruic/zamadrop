@@ -94,6 +94,6 @@ contract verifies KMS threshold signatures before mutating state. See
 ## Tests
 
 End-to-end tests (Synpress + Playwright) live in the project root and are
-documented at [`../docs/metamask-automation-plan.md`](../docs/metamask-automation-plan.md).
+documented at [`../test/TEST_PLAN.md`](../test/TEST_PLAN.md).
 The `e2e/` directory under `frontend/` from earlier MVP iterations was deleted
 during the V6 rebuild — there is no per-frontend test runner yet.
