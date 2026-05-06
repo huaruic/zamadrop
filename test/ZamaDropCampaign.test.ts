@@ -597,5 +597,23 @@ describe("ZamaDropCampaign", function () {
       const decrypted = await hre.fhevm.publicDecryptEuint(FhevmType.euint64, pending);
       expect(decrypted).to.equal(ALLOC_1);
     });
+
+    it("claimedTotalPlaintext 在多次成功 executeTransfer 后累加", async function () {
+      expect(await contract.claimedTotalPlaintext()).to.equal(0n);
+
+      // recipient1 claim + executeTransfer
+      await contract.connect(recipient1).claim();
+      const pending1 = await contract.pendingClaimHandle(recipient1.address);
+      const { decryptionProof: proof1 } = await publicDecryptWithProof(pending1);
+      await contract.connect(other).executeTransfer(recipient1.address, ALLOC_1, proof1);
+      expect(await contract.claimedTotalPlaintext()).to.equal(ALLOC_1);
+
+      // recipient2 claim + executeTransfer
+      await contract.connect(recipient2).claim();
+      const pending2 = await contract.pendingClaimHandle(recipient2.address);
+      const { decryptionProof: proof2 } = await publicDecryptWithProof(pending2);
+      await contract.connect(other).executeTransfer(recipient2.address, ALLOC_2, proof2);
+      expect(await contract.claimedTotalPlaintext()).to.equal(ALLOC_1 + ALLOC_2);
+    });
   });
 });

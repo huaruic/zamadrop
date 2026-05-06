@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {FHE, euint64, externalEuint64, ebool} from "@fhevm/solidity/lib/FHE.sol";
 import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
  * @title ZamaDropCampaign
@@ -16,6 +17,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  * - Claiming: 受益人可 claim，Auditor 可查聚合统计
  */
 contract ZamaDropCampaign is ZamaEthereumConfig {
+    using SafeERC20 for IERC20;
+
     // ─────────────────────────────────────────────
     // 错误
     // ─────────────────────────────────────────────
@@ -51,6 +54,10 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
     // V7: tracks how many distinct setAllocation calls succeeded; used by finalize
     // to require allocationCount == recipientCount before the FHE total check runs.
     uint64 public allocationCount;
+
+    // V7: plaintext sum of every successful executeTransfer. Supports the public
+    // solvency invariant `balanceOf(this) >= declaredTotal - claimedTotalPlaintext`.
+    uint64 public claimedTotalPlaintext;
 
     mapping(address => bool) public allocationSet;
     mapping(address => bool) public claimed;
@@ -256,7 +263,10 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
         FHE.checkSignatures(handles, abi.encode(amount), decryptionProof);
 
         transferred[user] = true;
-        require(token.transfer(user, amount), "token transfer failed");
+        // V7: plaintext accumulator drives the public solvency invariant.
+        // Bumped before the transfer so a transfer revert unwinds the bump.
+        claimedTotalPlaintext += amount;
+        token.safeTransfer(user, amount);
         emit TokenTransferred(user, amount);
     }
 
