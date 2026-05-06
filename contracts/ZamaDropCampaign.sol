@@ -44,6 +44,7 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
     address public immutable admin;
     address public immutable auditor;
     IERC20 public immutable token;
+    bytes32 public immutable recipientListHash;
 
     bool public finalized;
 
@@ -75,12 +76,29 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
     // ─────────────────────────────────────────────
     // 构造函数
     // ─────────────────────────────────────────────
-    constructor(uint64 _declaredTotal, uint64 _recipientCount, address _auditor, address _token) {
-        declaredTotal = _declaredTotal;
-        recipientCount = _recipientCount;
-        admin = msg.sender;
-        auditor = _auditor;
-        token = IERC20(_token);
+    /**
+     * @notice V7 constructor: explicit admin (so Safe/AA wallets work) and a
+     *         keccak256 commitment to the recipient list. The list itself is
+     *         NOT persisted — only its hash + length — so on-chain footprint
+     *         stays tiny while auditors can later replay AllocationSet events
+     *         and recompute the same hash.
+     */
+    constructor(
+        address admin_,
+        address auditor_,
+        address token_,
+        uint64 declaredTotal_,
+        address[] memory recipients,
+        bytes32 listHash_
+    ) {
+        if (keccak256(abi.encode(recipients)) != listHash_) revert HashMismatch();
+
+        declaredTotal = declaredTotal_;
+        recipientCount = uint64(recipients.length);
+        admin = admin_;
+        auditor = auditor_;
+        token = IERC20(token_);
+        recipientListHash = listHash_;
 
         // 初始化加密零值
         _runningTotal = FHE.asEuint64(0);
@@ -88,7 +106,7 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
 
         _claimedTotal = FHE.asEuint64(0);
         FHE.allowThis(_claimedTotal);
-        FHE.allow(_claimedTotal, _auditor);
+        FHE.allow(_claimedTotal, auditor_);
     }
 
     // ─────────────────────────────────────────────

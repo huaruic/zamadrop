@@ -31,6 +31,71 @@ async function publicDecryptWithProof(handle: string): Promise<{
   };
 }
 
+// 计算 recipientList hash（与合约里 keccak256(abi.encode(recipients)) 对齐）
+function computeListHash(recipients: string[]): string {
+  return ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(["address[]"], [recipients])
+  );
+}
+
+interface DeployOpts {
+  admin: HardhatEthersSigner;
+  auditor: HardhatEthersSigner;
+  recipients: string[];
+  declaredTotal?: bigint;
+  fundEscrow?: bigint | "declared" | false; // false = no fund, "declared" = declaredTotal, bigint = explicit
+  tokenSupply?: bigint; // 给 admin 的初始 token 余额；默认 = declaredTotal
+  listHashOverride?: string; // 测试 hash mismatch 时用
+}
+
+interface DeployResult {
+  campaign: Awaited<ReturnType<typeof ethers.getContractAt>>;
+  campaignAddress: string;
+  token: Awaited<ReturnType<typeof ethers.getContractAt>>;
+  tokenAddress: string;
+  listHash: string;
+}
+
+async function deployCampaign(opts: DeployOpts): Promise<DeployResult> {
+  const declaredTotal = opts.declaredTotal ?? 1000n;
+  const tokenSupply = opts.tokenSupply ?? declaredTotal;
+
+  const TokenFactory = await ethers.getContractFactory("MockToken");
+  const token = await TokenFactory.connect(opts.admin).deploy(
+    "ZamaDrop Test Token",
+    "ZDT",
+    tokenSupply,
+    opts.admin.address
+  );
+  await token.waitForDeployment();
+  const tokenAddress = await token.getAddress();
+
+  const listHash = opts.listHashOverride ?? computeListHash(opts.recipients);
+
+  const Factory = await ethers.getContractFactory("ZamaDropCampaign");
+  const deployed = await Factory.connect(opts.admin).deploy(
+    opts.admin.address,
+    opts.auditor.address,
+    tokenAddress,
+    declaredTotal,
+    opts.recipients,
+    listHash
+  );
+  await deployed.waitForDeployment();
+  const campaignAddress = await deployed.getAddress();
+  const campaign = await ethers.getContractAt("ZamaDropCampaign", campaignAddress);
+  const tokenContract = await ethers.getContractAt("MockToken", tokenAddress);
+
+  // Default: fund escrow with declaredTotal so legacy finalize tests pass
+  const fund = opts.fundEscrow ?? "declared";
+  if (fund !== false) {
+    const amount = fund === "declared" ? declaredTotal : fund;
+    await token.connect(opts.admin).transfer(campaignAddress, amount);
+  }
+
+  return { campaign, campaignAddress, token: tokenContract, tokenAddress, listHash };
+}
+
 describe("ZamaDropCampaign", function () {
   let contractAddress: string;
   let contract: Awaited<ReturnType<typeof ethers.getContractAt>>;
@@ -42,38 +107,21 @@ describe("ZamaDropCampaign", function () {
   let other: HardhatEthersSigner;
 
   const DECLARED_TOTAL = 1000n;
-  const RECIPIENT_COUNT = 2n;
   const ALLOC_1 = 600n;
   const ALLOC_2 = 400n; // 总和 = 1000 = DECLARED_TOTAL
 
   beforeEach(async function () {
     [admin, recipient1, recipient2, auditor, other] = await ethers.getSigners();
 
-    // 部署 MockToken（admin 持有 declaredTotal）
-    const TokenFactory = await ethers.getContractFactory("MockToken");
-    const token = await TokenFactory.connect(admin).deploy(
-      "ZamaDrop Test Token",
-      "ZDT",
-      DECLARED_TOTAL,
-      admin.address
-    );
-    await token.waitForDeployment();
-    const tokenAddress = await token.getAddress();
-
-    const Factory = await ethers.getContractFactory("ZamaDropCampaign");
-    const deployed = await Factory.connect(admin).deploy(
-      DECLARED_TOTAL,
-      RECIPIENT_COUNT,
-      auditor.address,
-      tokenAddress
-    );
-    await deployed.waitForDeployment();
-    contractAddress = await deployed.getAddress();
-    contract = await ethers.getContractAt("ZamaDropCampaign", contractAddress);
-    tokenContract = await ethers.getContractAt("MockToken", tokenAddress);
-
-    // 把 escrow 转入 campaign 合约（让 executeTransfer 时有钱可转）
-    await token.connect(admin).transfer(contractAddress, DECLARED_TOTAL);
+    const result = await deployCampaign({
+      admin,
+      auditor,
+      recipients: [recipient1.address, recipient2.address],
+      declaredTotal: DECLARED_TOTAL,
+    });
+    contract = result.campaign;
+    contractAddress = result.campaignAddress;
+    tokenContract = result.token;
   });
 
   // ─────────────────────────────────────────────
@@ -82,10 +130,71 @@ describe("ZamaDropCampaign", function () {
   describe("部署初始状态", function () {
     it("应正确设置 declaredTotal、recipientCount、admin、auditor", async function () {
       expect(await contract.declaredTotal()).to.equal(DECLARED_TOTAL);
-      expect(await contract.recipientCount()).to.equal(RECIPIENT_COUNT);
+      expect(await contract.recipientCount()).to.equal(2n);
       expect(await contract.admin()).to.equal(admin.address);
       expect(await contract.auditor()).to.equal(auditor.address);
       expect(await contract.finalized()).to.equal(false);
+    });
+
+    it("recipientListHash getter 返回构造器传入的 hash", async function () {
+      const expected = computeListHash([recipient1.address, recipient2.address]);
+      expect(await contract.recipientListHash()).to.equal(expected);
+    });
+
+    it("deployer ≠ admin: admin() 返回构造器参数而不是 msg.sender", async function () {
+      // 用 `other` 作为部署者，admin 显式传入 admin（不同地址）
+      const TokenFactory = await ethers.getContractFactory("MockToken");
+      const freshToken = await TokenFactory.connect(other).deploy(
+        "ZDT",
+        "ZDT",
+        DECLARED_TOTAL,
+        admin.address
+      );
+      await freshToken.waitForDeployment();
+
+      const recipients = [recipient1.address, recipient2.address];
+      const listHash = computeListHash(recipients);
+
+      const Factory = await ethers.getContractFactory("ZamaDropCampaign");
+      // other 部署，但 admin_ = admin
+      const deployed = await Factory.connect(other).deploy(
+        admin.address,
+        auditor.address,
+        await freshToken.getAddress(),
+        DECLARED_TOTAL,
+        recipients,
+        listHash
+      );
+      await deployed.waitForDeployment();
+
+      expect(await deployed.admin()).to.equal(admin.address);
+      expect(await deployed.admin()).to.not.equal(other.address);
+    });
+
+    it("hash 不一致时部署应 revert HashMismatch", async function () {
+      const recipients = [recipient1.address, recipient2.address];
+      const wrongHash = ethers.keccak256(ethers.toUtf8Bytes("wrong"));
+
+      const TokenFactory = await ethers.getContractFactory("MockToken");
+      const freshToken = await TokenFactory.connect(admin).deploy(
+        "ZDT",
+        "ZDT",
+        DECLARED_TOTAL,
+        admin.address
+      );
+      await freshToken.waitForDeployment();
+
+      const Factory = await ethers.getContractFactory("ZamaDropCampaign");
+      await expect(
+        Factory.connect(admin).deploy(
+          admin.address,
+          auditor.address,
+          await freshToken.getAddress(),
+          DECLARED_TOTAL,
+          recipients,
+          wrongHash
+        )
+      ).to.be.revertedWithCustomError(Factory, "HashMismatch");
     });
   });
 
@@ -160,9 +269,11 @@ describe("ZamaDropCampaign", function () {
     });
 
     it("总量不符时 finalized 应保持 false", async function () {
-      // 故意只设置一个，总量不足
+      // 两个 recipient 都设置，但金额加起来 ≠ DECLARED_TOTAL，sumCheck 返回 false
       const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
       await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_1); // 故意错
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
 
       await contract.connect(admin).finalize();
       const handle = await contract.finalizeCheckHandle();
@@ -274,23 +385,13 @@ describe("ZamaDropCampaign", function () {
     });
 
     it("finalize 前 claim 应 revert", async function () {
-      // 重新部署一个未 finalize 的合约（同时部署一个 fresh token）
-      const TokenFactory = await ethers.getContractFactory("MockToken");
-      const freshToken = await TokenFactory.connect(admin).deploy(
-        "ZamaDrop Test Token",
-        "ZDT",
-        DECLARED_TOTAL,
-        admin.address
-      );
-      await freshToken.waitForDeployment();
-      const Factory = await ethers.getContractFactory("ZamaDropCampaign");
-      const fresh = await Factory.connect(admin).deploy(
-        DECLARED_TOTAL,
-        RECIPIENT_COUNT,
-        auditor.address,
-        await freshToken.getAddress()
-      );
-      await fresh.waitForDeployment();
+      // 重新部署一个未 finalize 的合约
+      const { campaign: fresh } = await deployCampaign({
+        admin,
+        auditor,
+        recipients: [recipient1.address, recipient2.address],
+        declaredTotal: DECLARED_TOTAL,
+      });
       await expect(
         fresh.connect(recipient1).claim()
       ).to.be.revertedWithCustomError(fresh, "NotFinalized");
