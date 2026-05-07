@@ -53,7 +53,7 @@ export default function Step1Basics() {
   });
   const balance = balanceRaw as bigint | undefined;
 
-  const canProceed = name.trim().length > 0;
+  const canProceed = name.trim().length > 0 && isConnected;
 
   const handleNext = () => {
     if (!canProceed) return;

@@ -46,6 +46,25 @@ import type { DraftSnapshot, Recipient } from "./state";
 
 export type DeploySubStep = 1 | 2 | 3 | 4 | 5;
 
+/** Fine-grained phase within a sub-step. Lets the UI tell apart
+ *   - "waiting for the user to click Confirm in their wallet" (popup hint
+ *     after 8s, faucet links, etc.)
+ *   - "tx submitted, watching mempool" (Etherscan link is now meaningful)
+ *   - "tx mined, waiting on indexer/confirmation"
+ *   - "asking the Gateway to run threshold-MPC decryption" (5.5 only)
+ *
+ * Backwards compatible: old call sites that don't pass `meta` still work. */
+export type DeployPhase =
+  | "awaiting_signature"
+  | "tx_submitted"
+  | "tx_confirming"
+  | "verifying_kms";
+
+export interface DeployProgressMeta {
+  phase?: DeployPhase;
+  txHash?: Hex;
+}
+
 export interface DeployContext {
   walletClient: WalletClient;
   publicClient: PublicClient;
@@ -65,9 +84,18 @@ export interface DeployContext {
   existingCampaignAddress?: Address;
 
   // Progress + per-recipient hooks
-  onProgress: (step: DeploySubStep, detail?: string) => void;
+  onProgress: (
+    step: DeploySubStep,
+    detail?: string,
+    meta?: DeployProgressMeta,
+  ) => void;
   onAllocated: (recipientAddress: string) => void;
 }
+
+/** Campaign State enum — must mirror `enum State` in ZamaDropCampaign.sol.
+ * Used by `finalizeCampaign` to skip a redundant on-chain finalize when the
+ * campaign has already advanced past Setup (idempotent retry support). */
+const STATE_SETUP = 0;
 
 /** Thrown when the KMS verification at step 5.5 fails:
  *   - `kind === "timeout"`: relayer SDK publicDecrypt failed after retries
@@ -118,14 +146,15 @@ export async function executeDeployment(
   const N = ctx.recipients.length;
   for (let i = 0; i < N; i++) {
     const r = ctx.recipients[i];
+    const label = `${i + 1}/${N}`;
     if (ctx.alreadyAllocated?.has(r.address.toLowerCase())) {
-      ctx.onProgress(3, `${i + 1}/${N} (already allocated, skipped)`);
+      ctx.onProgress(3, `${label} (already allocated, skipped)`);
       continue;
     }
-    ctx.onProgress(3, `${i + 1}/${N} encrypting…`);
-    await setOneAllocation(ctx, campaignAddress, r);
+    ctx.onProgress(3, `${label} encrypting…`);
+    await setOneAllocation(ctx, campaignAddress, r, label);
     ctx.onAllocated(r.address);
-    ctx.onProgress(3, `${i + 1}/${N} done`);
+    ctx.onProgress(3, `${label} done`);
   }
 
   // ── 5.4 finalize ──────────────────────────────────────────────────
@@ -134,7 +163,13 @@ export async function executeDeployment(
   ctx.onProgress(4, "Finalize submitted.");
 
   // ── 5.5 Verify with KMS (active pull) ────────────────────────────
-  ctx.onProgress(5, "Asking gateway to decrypt sum check…");
+  // pullAndCallbackFinalize internally does publicDecrypt → callbackFinalize.
+  // We can't introspect its phases without changing the helper, so we surface
+  // the verifying_kms phase up front and let the wallet popup hint kick in
+  // naturally if the callback signature blocks for >8s on the user.
+  ctx.onProgress(5, "Asking gateway to decrypt sum check…", {
+    phase: "verifying_kms",
+  });
   try {
     const { result } = await pullAndCallbackFinalize(campaignAddress, {
       walletClient: ctx.walletClient,
@@ -171,6 +206,9 @@ async function deployCampaign(ctx: DeployContext): Promise<Address> {
     ctx.snapshot.listHash,
   ] as const;
 
+  ctx.onProgress(1, "Awaiting wallet signature…", {
+    phase: "awaiting_signature",
+  });
   // viem walletClient.deployContract returns a tx hash. We then await the
   // receipt and read `contractAddress` for the deployed instance.
   const hash = await ctx.walletClient.deployContract({
@@ -187,6 +225,11 @@ async function deployCampaign(ctx: DeployContext): Promise<Address> {
     account: ctx.adminAddress,
     chain: ctx.walletClient.chain,
   });
+  ctx.onProgress(1, "Tx submitted…", { phase: "tx_submitted", txHash: hash });
+  ctx.onProgress(1, "Confirming on chain…", {
+    phase: "tx_confirming",
+    txHash: hash,
+  });
   const receipt = await ctx.publicClient.waitForTransactionReceipt({ hash });
   if (!receipt.contractAddress) {
     throw new Error("Deploy receipt missing contractAddress.");
@@ -198,10 +241,28 @@ async function fundCampaign(
   ctx: DeployContext,
   campaignAddress: Address,
 ): Promise<void> {
+  // Idempotent: if a previous attempt already transferred the declared total
+  // (or more), skip the transfer entirely. Without this guard, a Retry after
+  // a Step 5.5 KMS failure would double-fund the campaign because the store's
+  // `existingCampaignAddress` is set on FinalizeFailureError.
+  const existing = (await ctx.publicClient.readContract({
+    address: ctx.tokenAddress,
+    abi: ERC20_ABI,
+    functionName: "balanceOf",
+    args: [campaignAddress],
+  })) as bigint;
+  if (existing >= ctx.snapshot.declaredTotal) {
+    ctx.onProgress(2, "Already funded — skipped.");
+    return;
+  }
+
   const data = encodeFunctionData({
     abi: ERC20_ABI,
     functionName: "transfer",
     args: [campaignAddress, ctx.snapshot.declaredTotal],
+  });
+  ctx.onProgress(2, "Awaiting wallet signature…", {
+    phase: "awaiting_signature",
   });
   // Use sendTransaction directly so we can pass the encoded calldata to the
   // ERC20 token contract regardless of any wagmi cache state.
@@ -210,6 +271,11 @@ async function fundCampaign(
     chain: ctx.walletClient.chain,
     to: ctx.tokenAddress,
     data,
+  });
+  ctx.onProgress(2, "Tx submitted…", { phase: "tx_submitted", txHash: hash });
+  ctx.onProgress(2, "Confirming on chain…", {
+    phase: "tx_confirming",
+    txHash: hash,
   });
   await ctx.publicClient.waitForTransactionReceipt({ hash });
 
@@ -231,6 +297,7 @@ async function setOneAllocation(
   ctx: DeployContext,
   campaignAddress: Address,
   recipient: Recipient,
+  label: string,
 ): Promise<Hash> {
   // Encrypt the uint64 amount — buffer is bound to (campaign, admin) per the
   // FHE input verifier's expectations.
@@ -249,6 +316,9 @@ async function setOneAllocation(
   const handle = toHex(ciphertexts.handles[0]);
   const proof = toHex(ciphertexts.inputProof);
 
+  ctx.onProgress(3, `${label} awaiting wallet signature…`, {
+    phase: "awaiting_signature",
+  });
   const hash = await ctx.walletClient.writeContract({
     abi: CAMPAIGN_ABI,
     address: campaignAddress,
@@ -256,6 +326,14 @@ async function setOneAllocation(
     args: [recipient.address, handle, proof],
     account: ctx.adminAddress,
     chain: ctx.walletClient.chain,
+  });
+  ctx.onProgress(3, `${label} tx submitted…`, {
+    phase: "tx_submitted",
+    txHash: hash,
+  });
+  ctx.onProgress(3, `${label} confirming on chain…`, {
+    phase: "tx_confirming",
+    txHash: hash,
   });
   await ctx.publicClient.waitForTransactionReceipt({ hash });
   return hash;
@@ -265,6 +343,23 @@ async function finalizeCampaign(
   ctx: DeployContext,
   campaignAddress: Address,
 ): Promise<void> {
+  // Idempotent: if the campaign has already advanced past Setup (Finalizing /
+  // Claiming / Failed), a second `finalize()` would revert and burn gas. Skip
+  // cleanly so a Retry after a 5.5 KMS failure can re-run only the active-pull
+  // step.
+  const currentState = (await ctx.publicClient.readContract({
+    address: campaignAddress,
+    abi: CAMPAIGN_ABI,
+    functionName: "state",
+  })) as number;
+  if (currentState !== STATE_SETUP) {
+    ctx.onProgress(4, "Already finalized — skipped.");
+    return;
+  }
+
+  ctx.onProgress(4, "Awaiting wallet signature…", {
+    phase: "awaiting_signature",
+  });
   const hash = await ctx.walletClient.writeContract({
     abi: CAMPAIGN_ABI,
     address: campaignAddress,
@@ -272,6 +367,11 @@ async function finalizeCampaign(
     args: [],
     account: ctx.adminAddress,
     chain: ctx.walletClient.chain,
+  });
+  ctx.onProgress(4, "Tx submitted…", { phase: "tx_submitted", txHash: hash });
+  ctx.onProgress(4, "Confirming on chain…", {
+    phase: "tx_confirming",
+    txHash: hash,
   });
   const receipt = await ctx.publicClient.waitForTransactionReceipt({ hash });
 

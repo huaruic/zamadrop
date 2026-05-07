@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAccount, usePublicClient, useWalletClient } from "wagmi";
+import type { Hex } from "viem";
 
+import { ERC20_ABI } from "@/abis";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,13 +14,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { CONTRACTS } from "@/config";
+import { CONTRACTS, ETHERSCAN_BASE, SEPOLIA_CHAIN_ID } from "@/config";
 import { getFhevmInstance } from "@/fhevm";
 
 import {
   executeDeployment,
   FinalizeFailureError,
   type DeployContext,
+  type DeployPhase,
   type DeploySubStep,
 } from "./deploy";
 import { useWizardStore } from "./state";
@@ -54,6 +57,28 @@ const STEP_LABELS: Record<DeploySubStep, string> = {
   5: "5.5 Verify with KMS (active pull)",
 };
 
+/** Conservative lower bound for ETH balance before we let the user click
+ * through to spend N+3 signatures. 0.005 ETH covers a single deploy on
+ * Sepolia at ~30 gwei; we don't try to compute the real total because we'd
+ * need gas estimates for unbroadcast txs. If the user runs out mid-flow,
+ * the wallet will reject — and the Retry button + idempotent fund/finalize
+ * make recovery cheap. */
+const MIN_ETH_BALANCE = 5_000_000_000_000_000n; // 0.005 ETH
+
+/** Wallet-popup hint threshold. If we're stuck in `awaiting_signature` for
+ * more than this, show a "check your wallet / popup blocker" alert. */
+const POPUP_HINT_DELAY_MS = 8_000;
+
+/** Payload we POST to /api/register-campaign. Cached so a Retry register
+ * button can re-fire without re-deriving the args from store state. */
+interface RegisterPayload {
+  address: `0x${string}`;
+  admin: `0x${string}`;
+  auditor: `0x${string}` | "";
+  name: string | null;
+  description: string | null;
+}
+
 export default function Step5Deploy() {
   const navigate = useNavigate();
   const { address: walletAddress } = useAccount();
@@ -77,6 +102,14 @@ export default function Step5Deploy() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [errorRecovery, setErrorRecovery] = useState<string | null>(null);
   const [detail, setDetail] = useState<string>("");
+  /** Sub-step phase, used to render Etherscan tx links and the wallet popup
+   * hint. Lives in component state — never persisted; if the user refreshes
+   * mid-flow the store partialize whitelist already drops `deployStep`, so
+   * this would be inconsistent if persisted. */
+  const [phase, setPhase] = useState<DeployPhase | null>(null);
+  const [txHash, setTxHash] = useState<Hex | null>(null);
+  const [phaseStartedAt, setPhaseStartedAt] = useState<number | null>(null);
+  const [showPopupHint, setShowPopupHint] = useState(false);
   /** Surfaced when chain deploy succeeded but backend registration failed.
    * Non-blocking: the campaign is fully usable via direct /c/<address> URL;
    * the warning only tells the admin that Home page discovery won't pick it
@@ -84,44 +117,122 @@ export default function Step5Deploy() {
   const [registrationWarning, setRegistrationWarning] = useState<string | null>(
     null,
   );
+  const [registerPayload, setRegisterPayload] =
+    useState<RegisterPayload | null>(null);
+  const [registerPending, setRegisterPending] = useState(false);
+  /** Bumped by the Retry button to re-trigger the deploy effect. The effect's
+   * `startedRef` gate is reset alongside this so a single user click cleanly
+   * re-runs from the top of `executeDeployment`. */
+  const [retryNonce, setRetryNonce] = useState(0);
 
   // Guard against StrictMode double-invoke firing the deploy twice. We only
-  // run once per page mount; if the user wants to retry they navigate away
-  // and back.
+  // run once per page mount; Retry resets this in tandem with `retryNonce`.
   const startedRef = useRef(false);
+
+  // Wallet popup hint: schedule a one-shot tick after POPUP_HINT_DELAY_MS to
+  // flip the hint on, and clear/reset it asynchronously when the phase
+  // changes. Both setShowPopupHint calls live inside a setTimeout so the
+  // effect body itself stays free of synchronous setState (satisfies
+  // `react-hooks/set-state-in-effect` and `react-hooks/purity`).
+  useEffect(() => {
+    const off = setTimeout(() => setShowPopupHint(false), 0);
+    if (phase !== "awaiting_signature" || phaseStartedAt == null) {
+      return () => clearTimeout(off);
+    }
+    const elapsed = Date.now() - phaseStartedAt;
+    const remaining = Math.max(0, POPUP_HINT_DELAY_MS - elapsed);
+    const on = setTimeout(() => setShowPopupHint(true), remaining);
+    return () => {
+      clearTimeout(off);
+      clearTimeout(on);
+    };
+  }, [phase, phaseStartedAt]);
 
   useEffect(() => {
     if (startedRef.current) return;
-    if (!walletAddress) return;
-    if (!walletClient) return;
-    if (!publicClient) return;
+    // Wallet/clients are guarded at render time below; if we got here, they
+    // exist. We still dereference them lazily to make the linter happy.
+    if (!walletAddress || !walletClient || !publicClient) return;
 
     startedRef.current = true;
 
     void (async () => {
-      // L3 final check (per spec: re-verify draft.version === snapshot.draftVersion
-      // and confirm presence of all required state). We perform these in the
-      // async IIFE rather than synchronously in the effect body to avoid the
-      // setState-in-effect lint and let the precondition error render
-      // identically to in-flight failures.
+      // L1/L2 final check — store-only invariants
       if (!snapshot) {
         setErrorMsg(
           "No snapshot present. Return to Step 4 and capture a snapshot first.",
         );
+        startedRef.current = false;
         return;
       }
       if (snapshot.draftVersion !== draftVersion) {
         setErrorMsg(
           "Snapshot is stale (draft was edited after capture). Return to Step 4 to recapture.",
         );
+        startedRef.current = false;
         return;
       }
       if (recipients.length === 0) {
         setErrorMsg("Recipient list is empty. Return to Step 2.");
+        startedRef.current = false;
         return;
       }
       if (!auditor) {
         setErrorMsg("Auditor address missing. Return to Step 3.");
+        startedRef.current = false;
+        return;
+      }
+
+      // L3 final check — read chain state right before we burn gas. Wrong
+      // network / no ETH / not enough ZDT all surface as recoverable errors;
+      // the Retry button re-runs this whole block.
+      try {
+        const [chainId, ethBalance, zdtBalance] = await Promise.all([
+          publicClient.getChainId(),
+          publicClient.getBalance({
+            address: walletAddress as `0x${string}`,
+          }),
+          publicClient.readContract({
+            address: TOKEN_ADDRESS,
+            abi: ERC20_ABI,
+            functionName: "balanceOf",
+            args: [walletAddress as `0x${string}`],
+          }) as Promise<bigint>,
+        ]);
+        if (chainId !== SEPOLIA_CHAIN_ID) {
+          setErrorMsg(
+            `Wrong network — switch your wallet to Sepolia (chain ID ${SEPOLIA_CHAIN_ID}).`,
+          );
+          setStatus("failed_partial");
+          startedRef.current = false;
+          return;
+        }
+        if (ethBalance < MIN_ETH_BALANCE) {
+          setErrorMsg(
+            `Insufficient ETH for gas (have ${ethBalance} wei, need ≥ ${MIN_ETH_BALANCE}). Top up via a Sepolia faucet (e.g. https://sepoliafaucet.com or https://www.alchemy.com/faucets/ethereum-sepolia) before retrying.`,
+          );
+          setStatus("failed_partial");
+          startedRef.current = false;
+          return;
+        }
+        if (zdtBalance < snapshot.declaredTotal) {
+          setErrorMsg(
+            `Insufficient ZDT balance — declared total ${snapshot.declaredTotal} > wallet balance ${zdtBalance}. Top up the admin wallet with ZDT before retrying.`,
+          );
+          setStatus("failed_partial");
+          startedRef.current = false;
+          return;
+        }
+      } catch (precheckErr) {
+        setErrorMsg(
+          `Pre-deploy chain check failed: ${
+            precheckErr instanceof Error
+              ? precheckErr.message
+              : String(precheckErr)
+          }`,
+        );
+        setStatus("failed_partial");
+        startedRef.current = false;
         return;
       }
 
@@ -139,9 +250,18 @@ export default function Step5Deploy() {
           adminAddress: walletAddress as `0x${string}`,
           existingCampaignAddress: campaignAddress ?? undefined,
           alreadyAllocated: new Set(allocatedSoFar),
-          onProgress: (step, d) => {
+          onProgress: (step, d, meta) => {
             setDeployStep(step);
             if (d) setDetail(d);
+            if (meta?.phase !== undefined) {
+              setPhase(meta.phase);
+              setPhaseStartedAt(
+                meta.phase === "awaiting_signature" ? Date.now() : null,
+              );
+            }
+            if (meta?.txHash !== undefined) {
+              setTxHash(meta.txHash);
+            }
           },
           onAllocated: (addr) => {
             markAllocated(addr);
@@ -150,38 +270,26 @@ export default function Step5Deploy() {
         const deployedAddress = await executeDeployment(ctx);
         setCampaignAddress(deployedAddress);
         setStatus("deployed");
+        // Clear in-flight phase indicators on success.
+        setPhase(null);
+        setTxHash(null);
+        setPhaseStartedAt(null);
 
         // Best-effort backend registration so the campaign shows up on Home
         // (As Admin / Auditor / Recipient sections) and the indexer starts
         // tracking events. Chain deploy is the canonical source of truth, so
         // any failure here is non-fatal — we surface a warning but keep the
         // success state.
-        try {
-          const backendUrl =
-            import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
-          const storeNow = useWizardStore.getState();
-          const res = await fetch(`${backendUrl}/api/register-campaign`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              address: deployedAddress,
-              admin: walletAddress,
-              auditor,
-              name: storeNow.name || null,
-              description: storeNow.description || null,
-            }),
-          });
-          if (!res.ok) {
-            const text = await res.text().catch(() => "");
-            setRegistrationWarning(
-              `Backend register returned ${res.status}. Campaign is live on chain; admin can re-register manually via POST /api/register-campaign. ${text.slice(0, 200)}`,
-            );
-          }
-        } catch (regErr) {
-          setRegistrationWarning(
-            `Backend unreachable — campaign is live on chain but won't appear on the Home page until it is registered. ${regErr instanceof Error ? regErr.message : String(regErr)}`,
-          );
-        }
+        const storeNow = useWizardStore.getState();
+        const payload: RegisterPayload = {
+          address: deployedAddress,
+          admin: walletAddress as `0x${string}`,
+          auditor,
+          name: storeNow.name || null,
+          description: storeNow.description || null,
+        };
+        setRegisterPayload(payload);
+        await runRegister(payload, setRegistrationWarning);
       } catch (err) {
         setStatus("failed_partial");
         if (err instanceof FinalizeFailureError) {
@@ -190,7 +298,7 @@ export default function Step5Deploy() {
           setErrorRecovery(
             err.kind === "failed"
               ? "The campaign entered Failed state. Open the admin view of the deployed campaign and click cancelCampaign to recover funds, then redeploy with corrected amounts."
-              : "The relayer SDK could not reach the KMS gateway after 3 attempts. State remains Finalizing on chain — open the admin view to inspect and retry by re-entering the wizard once the gateway is responsive. (V8 will add an admin escape hatch for prolonged outages.)",
+              : "The relayer SDK could not reach the KMS gateway after 3 attempts. State remains Finalizing on chain — click Retry once the gateway recovers (fund/finalize are idempotent and won't be re-charged), or open the admin view to inspect.",
           );
         } else {
           setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -211,7 +319,64 @@ export default function Step5Deploy() {
     markAllocated,
     setCampaignAddress,
     setStatus,
+    retryNonce,
   ]);
+
+  // Render-time guards (T2): if the user landed on Step 5 without a wallet
+  // connection, show actionable cards instead of a frozen progress strip.
+  if (!walletAddress) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Connect your wallet</CardTitle>
+          <CardDescription>
+            Step 5 deploys directly from the connected admin EOA. Connect a
+            wallet on Sepolia to continue.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
+  if (!walletClient || !publicClient) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Initializing wallet client…</CardTitle>
+          <CardDescription>
+            Waiting for wagmi to provision the wallet/public clients. This
+            should resolve within a second; refresh if it persists.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  const N = recipients.length;
+  const description =
+    N > 0
+      ? `${N} recipients · ${N + 3} wallet signatures: 1 deploy, 1 fund, ${N} setAllocation, 1 finalize. Step 5.5 verifies via KMS automatically (no signature).`
+      : "N+3 wallet signatures: 1 deploy, 1 fund, N setAllocation, 1 finalize. Step 5.5 verifies via KMS automatically (no signature).";
+
+  const handleRetry = () => {
+    setErrorMsg(null);
+    setErrorRecovery(null);
+    setRegistrationWarning(null);
+    setPhase(null);
+    setTxHash(null);
+    setPhaseStartedAt(null);
+    startedRef.current = false;
+    setRetryNonce((n) => n + 1);
+  };
+
+  const handleRetryRegister = async () => {
+    if (!registerPayload || registerPending) return;
+    setRegisterPending(true);
+    try {
+      await runRegister(registerPayload, setRegistrationWarning);
+    } finally {
+      setRegisterPending(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -220,9 +385,7 @@ export default function Step5Deploy() {
           <div className="flex items-start justify-between gap-3">
             <div>
               <CardTitle>Deploying campaign</CardTitle>
-              <CardDescription>
-                5 sub-steps. Each emits a separate wallet signature.
-              </CardDescription>
+              <CardDescription>{description}</CardDescription>
             </div>
             <Badge
               variant={
@@ -248,10 +411,11 @@ export default function Step5Deploy() {
                     : deployStep === s
                       ? "active"
                       : "pending";
+              const isActive = deployStep === s;
               return (
-                <li key={s} className="flex items-center gap-3">
+                <li key={s} className="flex items-start gap-3">
                   <SubStepDot status={sub} />
-                  <div className="font-mono text-xs">
+                  <div className="flex-1 font-mono text-xs">
                     <div className="font-semibold">
                       {STEP_LABELS[s]}
                       {s === 3 && (deployStep === 3 || deployStep > 3) && (
@@ -260,14 +424,34 @@ export default function Step5Deploy() {
                         </span>
                       )}
                     </div>
-                    {deployStep === s && detail && (
+                    {isActive && detail && (
                       <div className="text-muted-foreground">{detail}</div>
+                    )}
+                    {isActive && txHash && (
+                      <a
+                        href={`${ETHERSCAN_BASE}/tx/${txHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-foreground hover:text-primary hover:underline"
+                      >
+                        View on Etherscan →
+                      </a>
                     )}
                   </div>
                 </li>
               );
             })}
           </ol>
+          {showPopupHint && (
+            <Alert className="mt-3" variant="muted">
+              <AlertTitle>Waiting on wallet popup</AlertTitle>
+              <AlertDescription>
+                Check your wallet for the popup. If you don't see it, your
+                browser may have blocked it — disable the popup blocker for
+                this site and click Retry.
+              </AlertDescription>
+            </Alert>
+          )}
         </CardContent>
       </Card>
 
@@ -291,6 +475,9 @@ export default function Step5Deploy() {
                 — open the admin view to recover.
               </p>
             )}
+            <div>
+              <Button onClick={handleRetry}>Retry</Button>
+            </div>
           </AlertDescription>
         </Alert>
       )}
@@ -298,12 +485,52 @@ export default function Step5Deploy() {
       {status === "deployed" && campaignAddress && (
         <SuccessCard
           campaignAddress={campaignAddress}
-          onDone={() => navigate(`/c/${campaignAddress}`)}
+          onDone={() => {
+            useWizardStore.getState().reset();
+            navigate(`/c/${campaignAddress}`);
+          }}
           registrationWarning={registrationWarning}
+          onRetryRegister={
+            registerPayload ? handleRetryRegister : undefined
+          }
+          registerPending={registerPending}
         />
       )}
     </div>
   );
+}
+
+/** POST to /api/register-campaign. Sets `setWarning(null)` on success and a
+ * descriptive string on any non-2xx / network error. Extracted so first-call
+ * (inside the deploy IIFE) and Retry-register (button click) share one
+ * codepath. */
+async function runRegister(
+  payload: RegisterPayload,
+  setWarning: (w: string | null) => void,
+): Promise<void> {
+  try {
+    const backendUrl =
+      import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+    const res = await fetch(`${backendUrl}/api/register-campaign`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      setWarning(
+        `Backend register returned ${res.status}. Campaign is live on chain; click Retry register to try again. ${text.slice(0, 200)}`,
+      );
+      return;
+    }
+    setWarning(null);
+  } catch (regErr) {
+    setWarning(
+      `Backend unreachable — campaign is live on chain but won't appear on the Home page until it is registered. ${
+        regErr instanceof Error ? regErr.message : String(regErr)
+      }`,
+    );
+  }
 }
 
 function SubStepDot({ status }: { status: SubStepStatus }) {
@@ -322,10 +549,14 @@ function SuccessCard({
   campaignAddress,
   onDone,
   registrationWarning,
+  onRetryRegister,
+  registerPending,
 }: {
   campaignAddress: `0x${string}`;
   onDone: () => void;
   registrationWarning?: string | null;
+  onRetryRegister?: () => void;
+  registerPending?: boolean;
 }) {
   const base = window.location.origin;
   const adminUrl = `${base}/c/${campaignAddress}?role=admin`;
@@ -345,8 +576,19 @@ function SuccessCard({
         {registrationWarning && (
           <Alert variant="muted">
             <AlertTitle>Backend registration deferred</AlertTitle>
-            <AlertDescription className="break-words">
-              {registrationWarning}
+            <AlertDescription className="space-y-2 break-words">
+              <p>{registrationWarning}</p>
+              {onRetryRegister && (
+                <div>
+                  <Button
+                    size="sm"
+                    onClick={onRetryRegister}
+                    disabled={registerPending}
+                  >
+                    {registerPending ? "Retrying…" : "Retry register"}
+                  </Button>
+                </div>
+              )}
             </AlertDescription>
           </Alert>
         )}

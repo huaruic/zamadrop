@@ -88,9 +88,12 @@ export default function Step2Recipients() {
     lineIssues.some((i) => i.issue.level === "error") ||
     listIssues.some((i) => i.level === "error");
 
+  const balanceOk = balance !== undefined && sum <= balance;
+
   const handleNext = () => {
     if (hasErrorIssue) return;
     if (recipients.length === 0) return;
+    if (!balanceOk) return;
     setRecipients(recipients);
     bumpVersion();
     setStep(3);
@@ -175,7 +178,7 @@ export default function Step2Recipients() {
         </Button>
         <Button
           onClick={handleNext}
-          disabled={hasErrorIssue || recipients.length === 0}
+          disabled={hasErrorIssue || recipients.length === 0 || !balanceOk}
         >
           Next · Auditor
         </Button>

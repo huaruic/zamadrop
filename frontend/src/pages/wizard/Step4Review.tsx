@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { encodeAbiParameters, keccak256 } from "viem";
+import { encodeAbiParameters, isAddress, keccak256 } from "viem";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -98,7 +98,7 @@ export default function Step4Review() {
     confirmed &&
     (!showRedWarning || hardConfirm) &&
     name.trim().length > 0 &&
-    auditor.length > 0 &&
+    isAddress(auditor) &&
     recipients.length > 0;
 
   const handleStartDeploy = () => {

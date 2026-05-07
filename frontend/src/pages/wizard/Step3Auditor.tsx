@@ -81,7 +81,7 @@ export default function Step3Auditor() {
     typeof auditor === "string" && auditor.length > 0 && isAddress(auditor);
   const sufficient = balance !== undefined && balance >= derived.sum;
 
-  const canProceed = auditorValid && recipients.length > 0;
+  const canProceed = auditorValid && recipients.length > 0 && sufficient;
 
   const handleNext = () => {
     if (!canProceed) return;
