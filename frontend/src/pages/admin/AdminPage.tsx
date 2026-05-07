@@ -28,7 +28,7 @@ type Phase = "Setup" | "Finalize-pending" | "Claiming" | "Loading";
  *  Boundaries (per docs/role-page-protocol.md §4.2 + docs/security-notes.md §3):
  *   - Reads: declaredTotal, recipientCount, finalized, finalizeCheckHandle, AllocationSet events
  *   - Writes: setAllocation, finalize
- *   - Does NOT call publicDecrypt or callbackFinalize — that is the executor's job. */
+ *   - Calls publicDecrypt + callbackFinalize via the active-pull util in FinalizePanel. */
 export default function AdminPage() {
   const { campaignAddress } = useCampaignParam();
   const { address: walletAddress, isConnected } = useAccount();
