@@ -1,10 +1,14 @@
-import { useAccount } from "wagmi";
+import { useAccount, useReadContract } from "wagmi";
 
+import { CAMPAIGN_ABI } from "@/abis";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ETHERSCAN_BASE } from "@/config";
 import { useCampaignParam } from "@/hooks/useCampaignParam";
 import { useCampaignReads } from "@/hooks/useCampaignReads";
 import { useTokenMeta } from "@/hooks/useTokenMeta";
+
+// V7 state enum: 0 = Setup, 1 = Finalizing, 2 = Claiming, 3 = Failed.
+const STATE_FAILED = 3;
 
 import { AggregateCard } from "./AggregateCard";
 import { ClaimsActivity } from "./ClaimsActivity";
@@ -43,6 +47,15 @@ export default function AuditorPage() {
     !!auditor &&
     address.toLowerCase() === auditor.toLowerCase();
 
+  // V7 · surface a banner when the campaign is in terminal Failed state so
+  // auditors aren't reading metadata in a vacuum. Read-only — no action.
+  const { data: stateNumData } = useReadContract({
+    address: campaignAddress,
+    abi: CAMPAIGN_ABI,
+    functionName: "state",
+  });
+  const stateNum = stateNumData as number | undefined;
+
   // Verification panels render in BOTH preview and active modes — the V7
   // capability spec is explicit that auditor work is "完全只读" so anyone
   // (auditor or not) can recompute the list hash and check solvency. Only
@@ -53,6 +66,18 @@ export default function AuditorPage() {
       <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
         Auditor view · {shortAddr(campaignAddress)}
       </div>
+
+      {stateNum === STATE_FAILED && (
+        <Alert variant="destructive">
+          <AlertTitle>Campaign in Failed state</AlertTitle>
+          <AlertDescription>
+            KMS reported a sum mismatch (allocations sum ≠ declaredTotal). This
+            is a terminal state. The admin should call{" "}
+            <code>cancelCampaign</code> to recover the funds; check campaign
+            balance below to confirm.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {!isAuditor && (
         <Alert variant="warning">

@@ -17,6 +17,7 @@ import { useCampaignReads } from "@/hooks/useCampaignReads";
 import { formatTokenAmount, useTokenMeta } from "@/hooks/useTokenMeta";
 
 import { AllocationLedger } from "./AllocationLedger";
+import { CancelCampaignForm } from "./CancelCampaignForm";
 import { FinalizePanel } from "./FinalizePanel";
 import { SetAllocationForm } from "./SetAllocationForm";
 import { isZeroHash } from "./shortAddr";
@@ -99,7 +100,37 @@ export default function AdminPage() {
         adminLoaded={!!reads.admin}
       />
 
-      {isAdmin && (
+      {isAdmin && stateNum === 3 && (
+        <>
+          <StatusCard
+            phase={phase}
+            declaredTotal={reads.declaredTotal}
+            decimals={decimals}
+            symbol={symbol}
+            recipientCount={declaredCount}
+            allocationsSetCount={allocationsSetCount}
+          />
+
+          <V7BadgeStrip
+            claimedTotalPlaintext={claimedTotalPlaintext}
+            contractBalance={contractBalance}
+            recipientListHash={recipientListHash}
+            decimals={decimals}
+            symbol={symbol}
+          />
+
+          <CancelCampaignForm
+            campaignAddress={campaignAddress}
+            tokenAddress={reads.tokenAddress}
+            decimals={decimals}
+            symbol={symbol}
+            enabled={stateNum === 3}
+            onSuccess={refetchAll}
+          />
+        </>
+      )}
+
+      {isAdmin && stateNum !== 3 && (
         <>
           <StatusCard
             phase={phase}

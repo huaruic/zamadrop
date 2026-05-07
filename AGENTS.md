@@ -45,6 +45,16 @@ FHE.add / FHE.eq / FHE.allow / FHE.allowThis / FHE.fromExternal
 小 typo / lint / 窄测试改动可以不建 OpenSpec；合约行为、FHE/KMS、claim/finalize、
 前端核心流程、后端/indexer/API、隐私边界变更必须走 OpenSpec。
 
+## 命名约定：V6 / V7 / V8 是**内部 milestone 标签** ≠ 公开 semver
+
+- **公开发布版本**走 README Roadmap 的 `v0.x` / `v1` / `Beyond` 三段式（小写 v + 数字），跟 npm semver 一致。
+- **`V6` / `V7` / `V8`**（大写 V）只是**内部 milestone 名**，对应 OpenSpec change 分组：
+  - V1-V5：早期讨论过的 role/page IA 变体（见 `docs/role-page-protocol.md`），4 个被丢弃，V5 残骸在 `openspec/changes/archive/005-frontend/`
+  - V6：当前生产形态的 4-tab 能力页 IA（capability strip + always-visible tabs）
+  - V7：dApp wizard + 后端 indexer + active-pull KMS 架构（本 milestone 的 `v7-dapp-wizard` OpenSpec change）
+  - V8：finalize-recovery escape hatch + bulk-allocation 大规模 N（待做）
+- 所以 PR 标题里的 "V7" **不是 v7.0.0 release**，是"我们的第 7 次 milestone"。这是个 unprincipled 历史包袱，不要新增 V 前缀的 change-id；新 OpenSpec change 直接用描述性命名（`bulk-allocation` / `auditor-multisig`），把 "V8" 留作非正式口语指代当前 milestone 组。
+
 ## 关键不变量（改合约前必读）
 
 1. **Allocations 只能设置一次** — `setAllocation` 对同一 recipient 调用两次会 revert
