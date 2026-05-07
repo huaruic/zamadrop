@@ -17,6 +17,7 @@ Use `0000-template.md` as the starting point.
 
 ## Index
 
-- [0001: Keep Executor Offchain And KMS-Gated](0001-keep-executor-offchain-and-kms-gated.md)
+- [0001: Keep Executor Offchain And KMS-Gated](0001-keep-executor-offchain-and-kms-gated.md) — *operational guidance superseded by 0003*
 - [0002: Use OpenSpec For Protocol And Product Changes](0002-use-openspec-for-protocol-and-product-changes.md)
+- [0003: Frontend As Primary KMS-Callback Submitter](0003-frontend-as-primary-executor.md)
 

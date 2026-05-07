@@ -106,7 +106,7 @@
 
 #### Scenario: 仅 claim 不影响计数器
 
-- **WHEN** 用户调用 `claim()`(只 emit ClaimRequested),但 executor 还没调用 `executeTransfer`
+- **WHEN** 用户调用 `claim()`(只 emit ClaimRequested),前端 active-pull 还没完成 `executeTransfer` 的提交
 - **THEN** `claimedTotalPlaintext` SHALL NOT 变化
 
 ### Requirement: withdrawExcess(Option C)

@@ -41,8 +41,9 @@ FHE.allowForDecryption(handle); // allow Gateway public decrypt
 
 `contracts/ZamaDropCampaign.sol`
 
-- Roles: `Admin` / `Recipient` / `Auditor` / `Public` + off-chain
-  `Executor` (system) — see [`docs/role-page-protocol.md`](./docs/role-page-protocol.md)
+- Roles: `Admin` / `Recipient` / `Auditor` / `Public` (V7+ no separate
+  executor — KMS callbacks submitted by the same wallet that triggers
+  each flow; see [`docs/ADR/0003-frontend-as-primary-executor.md`](./docs/ADR/0003-frontend-as-primary-executor.md))
 - State machine: `Setup → Finalized → Claiming`
 - Trust assumptions: see [`docs/SECURITY.md`](./docs/SECURITY.md)
 

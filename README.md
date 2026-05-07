@@ -30,34 +30,35 @@ graph LR
     Recipient[Recipient]
     Auditor[Auditor]
     Public[Public Observer]
-    Executor[Executor / System]
 
     Contract[ZamaDropCampaign<br/>fhEVM contract]
     Token[ERC-20 Token<br/>escrow]
     Gateway[Zama Gateway<br/>KMS / Relayer]
 
-    Admin -->|setAllocation<br/>finalize| Contract
-    Recipient -->|requestMyAllocation<br/>claim| Contract
+    Admin -->|setAllocation<br/>finalize<br/>callbackFinalize| Contract
+    Recipient -->|requestMyAllocation<br/>claim<br/>executeTransfer| Contract
     Auditor -->|requestClaimedTotalForAuditor| Contract
     Public -->|read declaredTotal,<br/>recipientCount, finalized| Contract
-    Executor -->|callbackFinalize<br/>executeTransfer| Contract
 
-    Contract <-->|re-encrypt /<br/>publicDecrypt| Gateway
+    Admin <-.->|publicDecrypt sumCheck| Gateway
+    Recipient <-.->|publicDecrypt claim amount| Gateway
+    Contract <-->|re-encrypt| Gateway
     Contract -->|transfer on claim| Token
 
     classDef role fill:#fef3c7,stroke:#92400e,color:#1f2937;
     classDef system fill:#e0e7ff,stroke:#3730a3,color:#1f2937;
-    class Admin,Recipient,Auditor,Public,Executor role;
+    class Admin,Recipient,Auditor,Public role;
     class Contract,Token,Gateway system;
 ```
 
-Five capabilities, four user roles plus one system layer:
+Four user roles, no separate system layer:
 
-- **Admin** declares the total, sets each encrypted allocation, and triggers `finalize`.
-- **Recipient** decrypts their own allocation in the browser via re-encryption, then `claim`s.
+- **Admin** declares the total, sets each encrypted allocation, triggers `finalize`, and (V7+) self-submits `callbackFinalize` after actively pulling the KMS proof via the relayer SDK. No off-chain daemon involved.
+- **Recipient** decrypts their own allocation in the browser via re-encryption, signs `claim`, then self-submits `executeTransfer` after pulling the per-claim KMS proof. Two wallet popups, ~15 s end-to-end.
 - **Auditor** decrypts aggregate `claimedTotal` for compliance reporting — never per-recipient amounts.
 - **Public** reads campaign metadata and finalize state without any wallet.
-- **Executor (System)** is an off-chain settlement layer that consumes `finalizeCheckHandle` and `pendingClaimHandle` ciphertexts via Gateway public-decryption, then calls `callbackFinalize` and `executeTransfer`. The contract verifies KMS threshold signatures via `FHE.checkSignatures` before mutating state, so the executor is **not** a privileged role — any account can run `scripts/executor.ts`. See [Security Model](#security-model).
+
+The contract verifies KMS threshold signatures via `FHE.checkSignatures` before mutating state, so caller identity is irrelevant for integrity — the trust root is the KMS proof, not whoever submits it. See [ADR 0003](./docs/ADR/0003-frontend-as-primary-executor.md) for the architecture rationale and [Security Model](#security-model) for the full trust analysis.
 
 ## Live Deployment (Sepolia)
 
@@ -107,16 +108,21 @@ npm run dev            # Vite dev server on http://localhost:5173
 
 The frontend is a React Router 7 app composed around a single `CampaignLayout` (`frontend/src/pages/CampaignLayout.tsx`) with four capability tabs — `Overview`, `Admin`, `Recipient`, `Auditor` — routed under `/campaign/:address/{,admin,me,audit}`. All four tabs are always visible; role-gated tabs render an explicit `· active` / `· preview` suffix so a connected wallet can immediately see which capabilities it holds (see [`docs/role-page-protocol.md`](./docs/role-page-protocol.md) for the V6 information architecture). Configure addresses via `frontend/.env` (see `frontend/.env.example`); when unset, `frontend/src/config.ts` falls back to the deployment in `deployments/sepolia.json`. Wallet integration uses wagmi + viem; FHE operations go through `@zama-fhe/relayer-sdk`. UI components are built on shadcn/ui (Tailwind v4) and re-use design tokens from the landing-page repo via `frontend/src/styles/{tokens,effects}.css`.
 
-### Executor (off-chain settlement)
+### KMS callbacks (V7+: in-browser active-pull)
 
-`scripts/executor.ts` is a Node daemon that closes the FHE settlement loop: it polls the campaign every 8 s, calls `publicDecrypt` against the Zama Gateway whenever a `FinalizeRequested` or `ClaimRequested` event surfaces a handle, then submits `callbackFinalize(bool, decryptionProof)` or `executeTransfer(user, amount, decryptionProof)`. It is **not** a privileged role — the trust root is the KMS signature, and the on-chain flags (`finalized`, `transferred[user]`) make the daemon idempotent under parallel runs.
+V7 eliminated the off-chain executor daemon. The shared util
+[`frontend/src/lib/kms-active-pull.ts`](./frontend/src/lib/kms-active-pull.ts)
+exposes `pullAndCallbackFinalize` and `pullAndExecuteTransfer`: the
+same wallet that triggers each flow asks the Zama Gateway for a
+threshold-MPC-signed proof via `relayer-sdk.publicDecrypt`, then
+self-submits `callbackFinalize` (admin) or `executeTransfer`
+(recipient). End-to-end ~10–15 s on a healthy gateway. The trust root
+is the KMS signature verified on-chain via `FHE.checkSignatures` —
+caller identity is irrelevant. See [ADR 0003](./docs/ADR/0003-frontend-as-primary-executor.md).
 
-```bash
-bun run executor          # Sepolia
-bun run executor:local    # local fhevm hardhat network
-```
+For headless / CLI rescue paths, [`scripts/recover-stuck-finalize.ts`](./scripts/recover-stuck-finalize.ts) demonstrates the same pattern via `hre.fhevm.publicDecrypt`. Use it when a campaign is stuck Finalizing because no UI client has run yet.
 
-Operational helpers: `scripts/verify-roles.ts` (sanity-check admin/auditor + recent allocation events), `scripts/verify-decrypts.ts` (replay public decryption against a deployed campaign), `scripts/cli-setup.ts` (E2E driver for fresh deployments).
+Operational helpers: `scripts/verify-roles.ts` (sanity-check admin/auditor + recent allocation events), `scripts/verify-decrypts.ts` (replay public decryption against a deployed campaign), `scripts/cli-setup.ts` (E2E driver for fresh deployments — also uses active-pull internally).
 
 ## Testing
 
@@ -163,7 +169,7 @@ zamaDrop/
 │   │   ├── hooks/          # useCampaignReads, useTokenMeta, useCampaignEvents, useUserDecryptEuint64
 │   │   └── styles/         # tokens.css + effects.css (shared with secret-drop landing repo)
 ├── openspec/               # spec-driven change proposals (005-frontend marked SUPERSEDED)
-├── scripts/                # executor.ts (settlement daemon), verify-roles, verify-decrypts, cli-setup, e2e-sepolia
+├── scripts/                # recover-stuck-finalize (CLI rescue), verify-roles, verify-decrypts, cli-setup, e2e-sepolia
 └── test/                   # Hardhat + fhEVM mock unit tests (26 passing)
 ```
 
@@ -178,8 +184,8 @@ The encryption-side guarantees are unchanged: per-recipient allocations are stri
 
 ## Roadmap
 
-- **v0.x (now):** four-role MVP with KMS-hardened settlement, Sepolia validated, off-chain executor daemon shipped, real-MetaMask E2E coverage.
-- **v1:** auditor multisig, Merkle eligibility integration so ZamaDrop layers cleanly on top of existing Merkle-based airdrop tooling, separate admin/auditor wallets in production deployments, hosted executor with metrics + alerting.
+- **v0.x (now):** four-role MVP with KMS-hardened settlement, Sepolia validated, real-MetaMask E2E coverage. V7 brings in-browser active-pull KMS callbacks (no off-chain daemon required) and admin-friendly 5-step deployment wizard.
+- **v1:** auditor multisig, Merkle eligibility integration so ZamaDrop layers cleanly on top of existing Merkle-based airdrop tooling, separate admin/auditor wallets in production deployments, V8 finalize-recovery escape hatch for prolonged Gateway outages.
 - **Beyond:** campaign factory for multi-drop deployments, vesting curves, ERC-7984 confidential-transfer integration, contributor-grant and DAO-payroll templates that reuse the same primitives.
 
 ## Demo Video

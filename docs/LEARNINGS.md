@@ -157,23 +157,36 @@ Valid helpers include `FHE.add`, `FHE.eq`, `FHE.allow`, `FHE.allowThis`, and `FH
 
 `AGENTS.md` explicitly forbids the old `TFHE.xxx` naming.
 
-## Executor is not an integrity trust root
+## KMS-callback caller is not an integrity trust root
 
 ### Symptom
 
-It is tempting to treat `scripts/executor.ts` as a trusted backend because it submits plaintext finalize and transfer results.
+It was tempting (in V5/V6) to treat `scripts/executor.ts` as a trusted
+backend because it submits plaintext finalize and transfer results.
 
 ### Cause
 
-The executor observes Gateway decrypted values before relaying them onchain, but the contract verifies the KMS threshold signature before accepting those values.
+The caller observes Gateway-decrypted values before relaying them
+on-chain, but the contract verifies the KMS threshold signature before
+accepting those values.
 
 ### Fix
 
-Model the executor as a liveness component only. Integrity belongs to `FHE.checkSignatures` in `callbackFinalize` and `executeTransfer`.
+Treat the caller as **liveness-only**, irrelevant to integrity.
+Integrity belongs to `FHE.checkSignatures` in `callbackFinalize` and
+`executeTransfer`. V7 builds on this insight: the same wallet that
+triggers each flow self-submits the callback (frontend
+`pullAndCallbackFinalize` / `pullAndExecuteTransfer`), so no separate
+service is needed. See [ADR 0003](./ADR/0003-frontend-as-primary-executor.md).
+The off-chain `scripts/executor.ts` daemon was deleted in V7 once the
+frontend covered both happy-path callbacks.
 
 ### Prevention
 
-When editing settlement flows, preserve proof passthrough and add tests for forged bool or amount rejection.
+When editing settlement flows, preserve proof passthrough and add tests
+for forged bool / amount rejection. Do not introduce new "trusted
+relayer" services — push callbacks to whichever wallet is already
+authenticated for the surrounding flow.
 
 ## Claim privacy ends at settlement
 

@@ -62,7 +62,7 @@ Contains:
 - FHE API naming rules;
 - core contract and important functions;
 - critical invariants;
-- frontend and executor commands;
+- frontend and CLI smoke commands;
 - MVP non-goals;
 - trust assumptions;
 - memory entry points.
@@ -218,7 +218,7 @@ Contains:
 - confidentiality boundaries;
 - integrity boundaries;
 - KMS/Gateway proof model;
-- executor compromise analysis;
+- malicious-caller compromise analysis (V7+: caller is irrelevant, KMS proof is the trust root);
 - plaintext lifecycle;
 - historical gaps and hardening notes.
 
@@ -256,7 +256,7 @@ Contains:
 
 Reason:
 
-This file prevents agents from rediscovering the same bugs, such as using `TFHE.xxx`, trusting the executor for integrity, overstating privacy, or parsing token amounts with `Number`.
+This file prevents agents from rediscovering the same bugs, such as using `TFHE.xxx`, trusting the caller for integrity (V7+: only KMS proof is trusted), overstating privacy, or parsing token amounts with `Number`.
 
 ### `docs/WORKLOG.md`
 
@@ -315,7 +315,7 @@ Contains:
 
 Reason:
 
-Testing strategy cuts across contract, frontend, and executor work. Keep it
+Testing strategy cuts across contract, frontend, and script work. Keep it
 in one place instead of scattering test plans under `docs/`.
 
 ### Scratch Documents
@@ -354,7 +354,7 @@ Approximate useful context size:
 - core business code: under 10k lines;
 - Solidity contracts: a few hundred lines;
 - frontend: several thousand lines;
-- scripts/executor/deploy: around 1k lines;
+- scripts/deploy: around 1k lines;
 - tests: several hundred lines;
 - docs/OpenSpec/decision memory: around 8k-12k lines, including active planning docs.
 

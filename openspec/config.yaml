@@ -27,9 +27,9 @@ rules:
     - Do not expand MVP scope silently; list scope additions as explicit decisions.
   design:
     - Record alternatives considered and why the chosen path wins.
-    - Include trust assumptions for FHE, KMS, executor, backend, and frontend flows when relevant.
+    - Include trust assumptions for FHE, KMS callbacks, backend, and frontend flows when relevant.
     - Preserve ZamaDrop contract invariants unless the proposal explicitly changes them.
   tasks:
     - Keep tasks verifiable.
     - Include required tests or manual verification for each risky behavior change.
-    - Contract, FHE/KMS, executor, and privacy-boundary changes must include negative tests or adversarial checks.
+    - Contract, FHE/KMS, and privacy-boundary changes must include negative tests or adversarial checks.

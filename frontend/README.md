@@ -78,10 +78,13 @@ which roles the connected wallet holds. Full protocol spec:
 
 ## Trust posture
 
-The frontend never triggers `callbackFinalize` or `executeTransfer`. Settlement
-runs off-chain via [`scripts/executor.ts`](../scripts/executor.ts), and the
-contract verifies KMS threshold signatures before mutating state. See
-[`../docs/SECURITY.md`](../docs/SECURITY.md).
+The frontend submits `callbackFinalize` (admin) and `executeTransfer`
+(recipient) directly via the active-pull util ([`src/lib/kms-active-pull.ts`](src/lib/kms-active-pull.ts));
+the same wallet that triggers each flow self-submits the KMS callback. The
+contract verifies KMS threshold signatures before mutating state, so caller
+identity is irrelevant for integrity. No off-chain settlement service is
+required. See [ADR 0003](../docs/ADR/0003-frontend-as-primary-executor.md)
+and [`../docs/SECURITY.md`](../docs/SECURITY.md).
 
 ## Vite specifics
 

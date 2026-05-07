@@ -26,7 +26,7 @@ openspec/
 Create an OpenSpec change for:
 
 - contract behavior changes;
-- FHE ACL, KMS proof, finalize, claim, or executor changes;
+- FHE ACL, KMS proof, finalize, claim, or active-pull callback changes;
 - privacy boundary changes;
 - frontend flows that affect admin, recipient, or auditor behavior;
 - backend/indexer/API behavior;

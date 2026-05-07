@@ -1,6 +1,6 @@
 ## Context
 
-ZamaDrop V6 已经把 KMS-hardened settlement 跑通(`FHE.checkSignatures` 在 `callbackFinalize` / `executeTransfer` 里防 executor 伪造金额),合约层签名校验是 production-ready 的。但产品形态停在"工程脚手架"层面 —— `frontend/src/config.ts` 硬编码 campaign 地址,Admin 想发新空投必须打开终端跑 `scripts/cli-setup.ts`。
+ZamaDrop V6 已经把 KMS-hardened settlement 跑通(`FHE.checkSignatures` 在 `callbackFinalize` / `executeTransfer` 里防 caller 伪造金额),合约层签名校验是 production-ready 的(V7 起前端钱包主动 pull + 自提交,见 [ADR 0003](../../../docs/ADR/0003-frontend-as-primary-executor.md))。但产品形态停在"工程脚手架"层面 —— `frontend/src/config.ts` 硬编码 campaign 地址,Admin 想发新空投必须打开终端跑 `scripts/cli-setup.ts`。
 
 V7 的目标是把 ZamaDrop 推到"真产品"形态,**同时**把 4 轮 Codex 对抗 review 找到的 9 处合约层 bug 一次还清。这里有一个关键的设计杠杆:**通过让 Admin 钱包直接部署合约(浏览器内 wizard,而不是新加 Factory 合约)**,我们既得到完整的产品体验,又规避了 Factory 引入的 admin = msg.sender 错位 bug —— 钱包就是 EOA / Safe / AA 钱包,直接 CREATE 合约,`msg.sender` 就是钱包本身。
 

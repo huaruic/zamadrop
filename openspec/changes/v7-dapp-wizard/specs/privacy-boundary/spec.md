@@ -21,7 +21,7 @@ dApp 首页与 `docs/SECURITY.md` SHALL 显式说明 ZamaDrop 实际具备的隐
 - **WHEN** 读者查找"What's Protected"段
 - **THEN** 列表 SHALL 包含：
   - 分配金额在 at-rest 阶段的隐私（链上 FHE euint64 密文）
-  - 结算完整性（FHE.checkSignatures 防止 executor 伪造）
+  - 结算完整性（FHE.checkSignatures 防止任何 caller 伪造 amount/bool）
   - 聚合隐私原语（Auditor 仅解密 `_claimedTotal`）
   - 偿付不变式（可被任何人独立验证）
 

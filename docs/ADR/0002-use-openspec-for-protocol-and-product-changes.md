@@ -18,7 +18,7 @@ The project has protocol-level invariants that must survive future changes:
 
 ## Decision
 
-Use OpenSpec for every substantial protocol, product, frontend flow, executor, backend, or trust-boundary change.
+Use OpenSpec for every substantial protocol, product, frontend flow, KMS callback, backend, or trust-boundary change.
 
 Each significant change SHOULD live under:
 
