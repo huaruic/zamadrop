@@ -43,7 +43,7 @@ FHE.add / FHE.eq / FHE.allow / FHE.allowThis / FHE.fromExternal
 6. 代码
 
 小 typo / lint / 窄测试改动可以不建 OpenSpec；合约行为、FHE/KMS、claim/finalize、
-executor、前端核心流程、后端/indexer/API、隐私边界变更必须走 OpenSpec。
+前端核心流程、后端/indexer/API、隐私边界变更必须走 OpenSpec。
 
 ## 关键不变量（改合约前必读）
 
@@ -71,12 +71,14 @@ npm run build # tsc -b + vite build
 npm run lint
 ```
 
-## Executor（链下 settlement）
+## KMS 回调由前端主动 pull(ADR 0003)
 
-```bash
-npm run executor          # Sepolia
-npm run executor:local   # local hardhat network
-```
+V7 不再依赖独立的 executor 服务。`finalize` 后的 callbackFinalize、`claim`
+后的 executeTransfer 都由触发该流程的前端钱包主动用 relayer SDK
+publicDecrypt 拿 KMS 签名 + 自己提交。共享 util:
+`frontend/src/lib/kms-active-pull.ts`。CLI 端用
+`hre.fhevm.publicDecrypt` 在 `scripts/cli-setup.ts`、
+`scripts/recover-stuck-finalize.ts` 同一模式。
 
 ## 不做（MVP 范围外）
 
@@ -86,7 +88,8 @@ Merkle proof / vesting / factory / ERC7984（stretch） / 跨链 / KYC
 
 详见 [`docs/SECURITY.md`](./docs/SECURITY.md)。`callbackFinalize` 与
 `executeTransfer` 通过 `FHE.checkSignatures` 校验 KMS threshold 签名，
-任何账户都可调但伪造 amount / bool 会 revert。
+任何账户都可调但伪造 amount / bool 会 revert。V7 起这两个 callback 由
+触发流程的前端钱包主动提交（ADR 0003），不再依赖外部 executor 服务。
 
 ## 文档落点规则
 

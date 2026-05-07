@@ -2,7 +2,16 @@
 
 ## Status
 
-Accepted
+**Operational guidance superseded by [ADR 0003](./0003-frontend-as-primary-executor.md)
+on 2026-05-08.** The cryptographic trust-root analysis below remains
+correct: `FHE.checkSignatures` is the integrity guarantee and caller
+identity is irrelevant. What changed is the operational model — the
+frontend (and first-party CLI scripts) now submit the KMS callbacks
+themselves via active-pull instead of waiting for a long-running
+off-chain `executor` daemon. The `scripts/executor.ts` daemon and its
+`npm run executor` aliases have been removed.
+
+(Originally accepted, V5 era.)
 
 ## Context
 
