@@ -1,7 +1,7 @@
 ## 1. Setup
 
-- [ ] 1.1 Create feature branch `feat/v7-dapp-wizard` from latest `main`
-- [ ] 1.2 Verify `npm run compile` and `npm test` pass on baseline (no V7 changes yet)
+- [x] 1.1 Create feature branch `feat/v7-dapp-wizard` from latest `main`
+- [x] 1.2 Verify `npm run compile` and `npm test` pass on baseline (no V7 changes yet)
 
 ## 2. Contract Refactor (TDD per change, each commit must keep all tests green)
 
@@ -22,9 +22,9 @@
 ## 3. Deploy Scripts and CLI Migration
 
 - [x] 3.1 Update `deploy/01_deploy.ts` to call new constructor signature. Recipients sourced from `RECIPIENTS` env var (comma-separated) or fallback to `[deployer.address]` for smoke runs
-- [~] 3.2 Update `scripts/cli-setup.ts` for new constructor; replace `RECIPIENT_COUNT` env with `RECIPIENTS`; derive count from list length
+- [x] 3.2 Update `scripts/cli-setup.ts` for new constructor; replace `RECIPIENT_COUNT` env with `RECIPIENTS`; derive count from list length
 - [x] 3.3 Update `scripts/verify-onchain.ts`, `scripts/verify-roles.ts`, `scripts/e2e-sepolia.ts` for new ABI; print `recipientListHash` and `claimedTotalPlaintext` in verification output
-- [~] 3.4 Run end-to-end on local hardhat: `npm run compile && npm test && DECLARED_TOTAL=1000 RECIPIENTS=0x...,0x... npx hardhat run deploy/01_deploy.ts` succeeds
+- [x] 3.4 Run end-to-end on local hardhat: `npm run compile && npm test && DECLARED_TOTAL=1000 RECIPIENTS=0x...,0x... npx hardhat run deploy/01_deploy.ts` succeeds
 
 ## 4. Backend Scaffold
 
