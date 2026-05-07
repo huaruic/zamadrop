@@ -77,6 +77,13 @@ export default function Step5Deploy() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [errorRecovery, setErrorRecovery] = useState<string | null>(null);
   const [detail, setDetail] = useState<string>("");
+  /** Surfaced when chain deploy succeeded but backend registration failed.
+   * Non-blocking: the campaign is fully usable via direct /c/<address> URL;
+   * the warning only tells the admin that Home page discovery won't pick it
+   * up until someone re-registers. */
+  const [registrationWarning, setRegistrationWarning] = useState<string | null>(
+    null,
+  );
 
   // Guard against StrictMode double-invoke firing the deploy twice. We only
   // run once per page mount; if the user wants to retry they navigate away
@@ -143,6 +150,38 @@ export default function Step5Deploy() {
         const deployedAddress = await executeDeployment(ctx);
         setCampaignAddress(deployedAddress);
         setStatus("deployed");
+
+        // Best-effort backend registration so the campaign shows up on Home
+        // (As Admin / Auditor / Recipient sections) and the indexer starts
+        // tracking events. Chain deploy is the canonical source of truth, so
+        // any failure here is non-fatal — we surface a warning but keep the
+        // success state.
+        try {
+          const backendUrl =
+            import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+          const storeNow = useWizardStore.getState();
+          const res = await fetch(`${backendUrl}/api/register-campaign`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              address: deployedAddress,
+              admin: walletAddress,
+              auditor,
+              name: storeNow.name || null,
+              description: storeNow.description || null,
+            }),
+          });
+          if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            setRegistrationWarning(
+              `Backend register returned ${res.status}. Campaign is live on chain; admin can re-register manually via POST /api/register-campaign. ${text.slice(0, 200)}`,
+            );
+          }
+        } catch (regErr) {
+          setRegistrationWarning(
+            `Backend unreachable — campaign is live on chain but won't appear on the Home page until it is registered. ${regErr instanceof Error ? regErr.message : String(regErr)}`,
+          );
+        }
       } catch (err) {
         setStatus("failed_partial");
         if (err instanceof FinalizeFailureError) {
@@ -257,7 +296,11 @@ export default function Step5Deploy() {
       )}
 
       {status === "deployed" && campaignAddress && (
-        <SuccessCard campaignAddress={campaignAddress} onDone={() => navigate(`/c/${campaignAddress}`)} />
+        <SuccessCard
+          campaignAddress={campaignAddress}
+          onDone={() => navigate(`/c/${campaignAddress}`)}
+          registrationWarning={registrationWarning}
+        />
       )}
     </div>
   );
@@ -278,9 +321,11 @@ function SubStepDot({ status }: { status: SubStepStatus }) {
 function SuccessCard({
   campaignAddress,
   onDone,
+  registrationWarning,
 }: {
   campaignAddress: `0x${string}`;
   onDone: () => void;
+  registrationWarning?: string | null;
 }) {
   const base = window.location.origin;
   const adminUrl = `${base}/c/${campaignAddress}?role=admin`;
@@ -297,6 +342,14 @@ function SuccessCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 font-mono text-xs">
+        {registrationWarning && (
+          <Alert variant="muted">
+            <AlertTitle>Backend registration deferred</AlertTitle>
+            <AlertDescription className="break-words">
+              {registrationWarning}
+            </AlertDescription>
+          </Alert>
+        )}
         <ShareRow label="Admin" url={adminUrl} />
         <ShareRow label="Recipients" url={recipientUrl} />
         <ShareRow label="Auditor" url={auditorUrl} />
