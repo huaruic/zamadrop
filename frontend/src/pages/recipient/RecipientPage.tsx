@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useAccount, useReadContract } from "wagmi";
 
-import { CAMPAIGN_ABI } from "@/abis";
+import { CAMPAIGN_ABI, ERC20_ABI } from "@/abis";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useCampaignParam } from "@/hooks/useCampaignParam";
 import { useCampaignReads } from "@/hooks/useCampaignReads";
@@ -44,6 +44,19 @@ export default function RecipientPage() {
     functionName: "state",
   });
   const stateNum = stateNumData as number | undefined;
+
+  // V7 · in Failed state we want to distinguish "admin already cancelled
+  // (balance == 0)" from "admin has not yet called cancelCampaign". Reading
+  // the campaign's token balance gives the recipient an honest signal
+  // instead of pre-asserting funds were returned.
+  const { data: campaignBalanceData } = useReadContract({
+    address: tokenAddress,
+    abi: ERC20_ABI,
+    functionName: "balanceOf",
+    args: campaignAddress ? [campaignAddress] : undefined,
+    query: { enabled: stateNum === STATE_FAILED && !!tokenAddress },
+  });
+  const campaignBalance = campaignBalanceData as bigint | undefined;
 
   // Per-recipient flags. All gated on a connected account.
   const {
@@ -128,14 +141,36 @@ export default function RecipientPage() {
     );
   }
 
-  // V7 · campaign cancelled by admin (Failed state).
+  // V7 · campaign in Failed state. Three sub-states based on campaign
+  // balance: loading / already-cancelled / awaiting-admin-cancel.
   if (stateNum === STATE_FAILED) {
+    if (campaignBalance === undefined) {
+      return (
+        <Alert variant="muted">
+          <AlertTitle>Verifying campaign state…</AlertTitle>
+          <AlertDescription />
+        </Alert>
+      );
+    }
+    if (campaignBalance === 0n) {
+      return (
+        <Alert variant="destructive">
+          <AlertTitle>Campaign cancelled by admin</AlertTitle>
+          <AlertDescription>
+            The KMS sum check failed and the admin terminated this campaign.
+            Funds have been returned to the admin via <code>cancelCampaign</code>.
+          </AlertDescription>
+        </Alert>
+      );
+    }
     return (
       <Alert variant="destructive">
-        <AlertTitle>Campaign cancelled by admin</AlertTitle>
+        <AlertTitle>Campaign in Failed state</AlertTitle>
         <AlertDescription>
-          The KMS sum check failed and the admin terminated this campaign.
-          Funds have been returned to the admin via <code>cancelCampaign</code>.
+          The KMS sum check failed (sum of allocations ≠ declaredTotal). The
+          admin has not yet called <code>cancelCampaign</code> to recover the
+          funds. There is no claim path here — please contact your admin to
+          terminate the campaign.
         </AlertDescription>
       </Alert>
     );
@@ -195,6 +230,7 @@ export default function RecipientPage() {
         account={address}
         decimals={decimals}
         symbol={symbol}
+        transferred={transferred}
       />
     </div>
   );
