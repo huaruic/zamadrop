@@ -6,6 +6,7 @@ import { SiweButton } from "@/auth/SiweButton";
 import { authHeader, getSessionToken } from "@/auth/siwe-client";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -136,6 +137,31 @@ export default function Home() {
         </div>
         <SiweButton onSessionChange={() => setSessionTick((n) => n + 1)} />
       </header>
+
+      {/* Primary CTA: deploy a campaign. Always visible for discoverability;
+          disabled state until wallet connects so first-time visitors still
+          see the action exists. */}
+      <Card className="mb-6 border-primary/40 bg-primary/5">
+        <CardHeader>
+          <CardTitle>Deploy a confidential drop</CardTitle>
+          <CardDescription>
+            Distribute encrypted token allocations with on-chain sum
+            verification. Recipients claim privately; the public ledger only
+            shows that a claim happened.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isConnected ? (
+            <Button asChild size="sm">
+              <Link to="/wizard">Start the 5-step wizard →</Link>
+            </Button>
+          ) : (
+            <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">
+              Connect a wallet (top right) to deploy a campaign.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Honest privacy claim. Spec: recipient-discovery → "SIWE 范围的诚实表述". */}
       <Card className="mb-8 border-cipher/40 bg-cipher/5">
