@@ -19,6 +19,23 @@
  */
 
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
+
+/** Bump when the persisted shape changes incompatibly. zustand persist will
+ * drop stored data whose `version` is older. */
+const PERSIST_SCHEMA_VERSION = 1;
+
+/** JSON.stringify replacer that turns bigint into a tagged string so
+ * `recipients[].amount` and `snapshot.declaredTotal` survive a round-trip
+ * through localStorage. */
+const bigintReplacer = (_key: string, value: unknown) =>
+  typeof value === "bigint" ? `__bigint__:${value.toString()}` : value;
+
+/** Inverse of `bigintReplacer` — runs on JSON.parse rehydration. */
+const bigintReviver = (_key: string, value: unknown) =>
+  typeof value === "string" && value.startsWith("__bigint__:")
+    ? BigInt(value.slice("__bigint__:".length))
+    : value;
 
 export interface Recipient {
   /** Canonical 0x-prefixed checksummed-or-lowercase address. */
@@ -115,36 +132,64 @@ const initialState = {
   allocatedSoFar: [],
 };
 
-export const useWizardStore = create<WizardState>((set) => ({
-  ...initialState,
+export const useWizardStore = create<WizardState>()(
+  persist(
+    (set) => ({
+      ...initialState,
 
-  setDraftId: (id) => set({ draftId: id }),
+      setDraftId: (id) => set({ draftId: id }),
 
-  bumpVersion: () =>
-    set((s) => ({ draftVersion: s.draftVersion + 1, snapshot: null })),
+      bumpVersion: () =>
+        set((s) => ({ draftVersion: s.draftVersion + 1, snapshot: null })),
 
-  setStep: (currentStep) => set({ currentStep }),
+      setStep: (currentStep) => set({ currentStep }),
 
-  setBasics: (name, description) => set({ name, description }),
+      setBasics: (name, description) => set({ name, description }),
 
-  setRecipients: (recipients) => set({ recipients }),
+      setRecipients: (recipients) => set({ recipients }),
 
-  setAuditor: (auditor) => set({ auditor }),
+      setAuditor: (auditor) => set({ auditor }),
 
-  setSnapshot: (snapshot) => set({ snapshot }),
+      setSnapshot: (snapshot) => set({ snapshot }),
 
-  setCampaignAddress: (campaignAddress) => set({ campaignAddress }),
+      setCampaignAddress: (campaignAddress) => set({ campaignAddress }),
 
-  setDeployStep: (deployStep) => set({ deployStep }),
+      setDeployStep: (deployStep) => set({ deployStep }),
 
-  setStatus: (status) => set({ status }),
+      setStatus: (status) => set({ status }),
 
-  markAllocated: (address) =>
-    set((s) => {
-      const lc = address.toLowerCase();
-      if (s.allocatedSoFar.includes(lc)) return {};
-      return { allocatedSoFar: [...s.allocatedSoFar, lc] };
+      markAllocated: (address) =>
+        set((s) => {
+          const lc = address.toLowerCase();
+          if (s.allocatedSoFar.includes(lc)) return {};
+          return { allocatedSoFar: [...s.allocatedSoFar, lc] };
+        }),
+
+      reset: () => set({ ...initialState }),
     }),
-
-  reset: () => set({ ...initialState }),
-}));
+    {
+      name: "zd:wizard-draft-v1",
+      version: PERSIST_SCHEMA_VERSION,
+      storage: createJSONStorage(() => localStorage, {
+        replacer: bigintReplacer,
+        reviver: bigintReviver,
+      }),
+      // Persist user-entered draft fields. Deliberately exclude transient
+      // deploy progress (`deployStep`, `status`, `campaignAddress`,
+      // `allocatedSoFar`): once a refresh happens mid-deploy, the in-flight
+      // tx state is no longer trustworthy — better to restart Step 5 than
+      // resume against a stale txhash. Snapshot stays so we don't force
+      // re-capture of listHash if user is still on Step 4 review.
+      partialize: (s) => ({
+        draftId: s.draftId,
+        draftVersion: s.draftVersion,
+        currentStep: s.currentStep,
+        name: s.name,
+        description: s.description,
+        recipients: s.recipients,
+        auditor: s.auditor,
+        snapshot: s.snapshot,
+      }),
+    },
+  ),
+);
