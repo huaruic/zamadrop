@@ -50,7 +50,16 @@ executor、前端核心流程、后端/indexer/API、隐私边界变更必须走
 1. **Allocations 只能设置一次** — `setAllocation` 对同一 recipient 调用两次会 revert
 2. **`claim()` 是原子的** — 先设 `claimed[addr] = true` 再转账，任意一步 revert 会回滚整个调用
 3. **`claimedTotal` 只在 `claim()` 中更新** — 其他地方不会更新
-4. **Gateway 回调延迟** — testnet finalize 需要 1-3 区块，建议 demo 时提前 finalize
+4. **KMS 验证用 active pull,不要被动等 Gateway push** — finalize() 会
+   把加密的 sumCheck handle 标记为 publicly decryptable 并存到
+   `finalizeCheckHandle`。任何代码（包括 wizard frontend）都应该用
+   relayer SDK `publicDecrypt(handles)` 主动询问 Gateway 拿到 threshold
+   MPC 签名的解密结果，然后自己提交 `callbackFinalize(result, proof)`。
+   被动监听 `Finalized` 事件不可靠 — Gateway 在 Sepolia 偶尔 missed
+   event subscription 会让 campaign 卡 Finalizing 状态。Active pull
+   端到端 ~10-15s（~3-10s MPC + ~12s 区块）。
+   参考实现：`scripts/recover-stuck-finalize.ts`、
+   `frontend/src/pages/wizard/deploy.ts` 的 `pullAndCallback`。
 
 ## 前端开发
 

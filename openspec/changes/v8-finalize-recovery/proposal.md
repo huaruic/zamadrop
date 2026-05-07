@@ -2,9 +2,18 @@
 
 ## Why
 
-V7 ships `Finalizing` as a state with **no escape hatch**. If the Zama KMS
-gateway never delivers `callbackFinalize()`, the campaign and its escrowed
-funds are **permanently locked**.
+> **Update 2026-05-08**: V7 wizard now uses **active-pull KMS verification**
+> (relayer SDK `publicDecrypt` + self-submitted `callbackFinalize`),
+> shipped in the same V7 PR. This handles the common "Gateway missed
+> event" failure mode that motivated this change. V8's escape hatch
+> remains useful for the **rare tail case** where the Gateway is truly
+> unreachable for hours (network outage, threshold validator quorum
+> loss). Priority drops from "ship-blocking" to "post-V7 quality
+> improvement".
+
+V7 (without active pull) shipped `Finalizing` as a state with **no escape
+hatch**. If the Zama KMS gateway never delivers `callbackFinalize()`, the
+campaign and its escrowed funds are **permanently locked**.
 
 Today (2026-05-07) on Sepolia we saw this fire empirically:
 

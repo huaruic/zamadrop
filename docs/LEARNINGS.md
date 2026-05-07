@@ -2,69 +2,86 @@
 
 This file records debugging conclusions and project lessons that future agents should not rediscover from scratch. Keep entries short and factual. If an entry becomes a long-lived architectural rule, promote it to an ADR or `AGENTS.md`.
 
-## V7 Sepolia e2e — KMS callback can stall 30+ minutes (2026-05-07)
+## V7 wizard 5.5 — passive Gateway-push to active relayer pull (2026-05-08)
 
 ### Symptom
 
 During Wave 2.2 of the V7 ship, deployed campaign
 `0x5a20529d2c930CE73fdd299C10Db26E10D2FB80D` on Sepolia. setAllocations
 × 2 and `finalize()` all succeeded; state entered `Finalizing`. After
-**30+ minutes** the Zama KMS gateway never delivered
-`callbackFinalize()`. State remained Finalizing, 600 ZDT permanently
-locked: `claim`, `withdrawExcess`, and `cancelCampaign` all gated on
-incompatible states; `setAllocation`/`finalize` also locked out.
+**30+ minutes** the wizard reported "KMS callback did not arrive" and
+threw `FinalizeFailureError(timeout)`. 600 ZDT escrowed and apparently
+locked.
 
-The wizard's 5-minute timeout fired with `FinalizeFailureError` whose
-remediation copy ("use withdrawExcess or cancelCampaign") was misleading
-because both require state ≠ Finalizing.
+### Investigation result
 
-### Cause
+The KMS Gateway was healthy the whole time. Running an active-pull
+recovery script (`scripts/recover-stuck-finalize.ts`) returned the
+decryption + signed proof in **3.7 seconds**:
 
-V7's contract has no escape hatch from `Finalizing`. The state machine
-treats KMS callback as the only exit, on the assumption that the
-gateway will always deliver within 1-3 blocks per AGENTS.md. Empirically
-on Sepolia testnet, KMS occasionally stalls indefinitely (likely
-threshold validator quorum / RPC subscription / network congestion).
+```
+[1/3] Asking relayer SDK to publicDecrypt the handle...
+      Returned in 3.7s
+      result: true
+[2/3] Submitting callbackFinalize ourselves...
+      tx: 0x1d2d2743... ✅ Success
+[3/3] State after: Claiming
+🎉 Campaign recovered.
+```
 
-Three Sepolia campaigns were created during V7 testing with locked
-funds totaling ~1200 ZDT (testnet, harmless dollars-wise but
-illustrative of the production risk):
-
-- `0xb9f0a71be6ca4de909df15eb846128d7e84bb4e1` — Setup (0 ZDT, abandoned
-  due to address-checksum bug on Step 5.3)
-- `0x2b0C786CeDE08AC3d06e1703e62F08b524911b1d` — Setup (600 ZDT, same
-  bug; ZDT funded but allocations never set)
-- `0x5a20529d2c930CE73fdd299C10Db26E10D2FB80D` — Finalizing (600 ZDT,
-  KMS never returned)
+Root cause: the wizard's `waitForClaiming` was passive — it polled
+`state()` waiting for the Gateway to push `callbackFinalize`. Gateway's
+event subscription on Sepolia is unreliable; if it misses the
+`FinalizeRequested` event, no callback ever fires. The encrypted ebool
+handle is on chain and `makePubliclyDecryptable`'d — anyone can ask the
+Gateway to decrypt it and submit the callback. The wizard simply
+wasn't doing this.
 
 ### Fix
 
-Two layers, separately tracked:
+`frontend/src/pages/wizard/deploy.ts`:
 
-1. **Immediate (V7 ship)**: document the limitation in PR risks and
-   `docs/SECURITY.md`. Recommend pre-finalizing 1+ hour before any
-   demo on Sepolia. Do not rely on V7 for production fund custody until
-   V8 ships.
+- Removed `waitForClaiming` (passive polling), `KMS_CALLBACK_TIMEOUT_MS`,
+  `POLL_INTERVAL_MS`, `sleep()` helper.
+- Added `pullAndCallback`: reads `finalizeCheckHandle` from contract,
+  calls `ctx.fhevm.publicDecrypt([handle])` (with 3-attempt retry +
+  5s backoff), submits `callbackFinalize(result, proof)` ourselves,
+  tolerates state-already-advanced races.
 
-2. **V8 design (`openspec/changes/v8-finalize-recovery/`)**: add a
-   distinct `TimedOut` state, `adminTimeoutCancel()` admin escape
-   hatch, modified `callbackFinalize` and `cancelCampaign` guards to
-   support late KMS rescue, and a constructor parameter for the
-   timeout duration. Codex review (Codex session
-   `019e01e1-a2c1-76f3-846f-8740901cfb16`) flagged three High-severity
-   flaws in a naive single-step `Failed`-reuse design that the
-   two-step `TimedOut → Failed` design avoids.
+End-to-end Step 5.5 latency now **~10-15s** (~3-10s relayer MPC +
+~12s Sepolia block). No 5-minute timeout. No passive polling.
+
+### Sepolia orphans created during this debugging cycle
+
+- `0xb9f0a71be6ca4de909df15eb846128d7e84bb4e1` — Setup (0 ZDT, abandoned
+  due to address-checksum bug on Step 5.3 before this fix).
+- `0x2b0C786CeDE08AC3d06e1703e62F08b524911b1d` — Setup (600 ZDT, same
+  checksum bug; ZDT funded but allocations never set; no recovery
+  path in V7).
+- `0x5a20529d2c930CE73fdd299C10Db26E10D2FB80D` — recovered to Claiming
+  via active-pull script; tx `0x1d2d2743c9af03fe...` (block 10806890+).
+  Used for Wave 2.2 Phase B/C live testing.
+
+### V8 status
+
+`openspec/changes/v8-finalize-recovery/` (TimedOut state +
+adminTimeoutCancel escape hatch) remains useful for the **rare tail
+case** where Gateway is truly unreachable for hours (network outage,
+threshold validator quorum loss). Active pull handles the common
+"missed event" failure mode; escape hatch handles the residual.
+
+V8 priority drops from "ship-blocking safety hole" to "post-V7 quality
+improvement" once active pull is in V7.
 
 ### Prevention
 
-- AGENTS.md note about "demos should finalize ahead of time" is too
-  weak; treat KMS callback as **best-effort with no SLA on testnet**.
-- Future contract changes that introduce async oracle dependencies
-  must include an explicit timeout/escape mechanism in the spec from
-  day one.
-- Wizard UX must not block forever on async events; surface "continue
-  to admin view" + "still processing" affordances within minutes, not
-  hours.
+- **For any future async oracle integration**: prefer active pull
+  (request-response) over passive event subscription as the primary
+  data-flow direction. Push-callbacks are an optimization, not the
+  trust root.
+- **Wizard timing budgets**: any step that depends on an external
+  service should report wall-clock latency to telemetry; a step
+  budget of 30s+ should default to active retry, not passive wait.
 
 ## V7 wizard implementation gaps (2026-05-07)
 

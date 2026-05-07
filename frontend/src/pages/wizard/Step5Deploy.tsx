@@ -51,7 +51,7 @@ const STEP_LABELS: Record<DeploySubStep, string> = {
   2: "5.2 Fund campaign",
   3: "5.3 setAllocation × N",
   4: "5.4 finalize()",
-  5: "5.5 Wait for KMS callback",
+  5: "5.5 Verify with KMS (active pull)",
 };
 
 export default function Step5Deploy() {
@@ -189,8 +189,8 @@ export default function Step5Deploy() {
           setErrorMsg(err.message);
           setErrorRecovery(
             err.kind === "failed"
-              ? "The campaign entered Failed state. Use cancelCampaign in the admin view of the deployed campaign to recover funds, then redeploy."
-              : "The KMS callback timed out. Verify the campaign state — if it later settles to Claiming you may continue; if Failed, cancelCampaign; otherwise withdrawExcess once Claiming.",
+              ? "The campaign entered Failed state. Open the admin view of the deployed campaign and click cancelCampaign to recover funds, then redeploy with corrected amounts."
+              : "The relayer SDK could not reach the KMS gateway after 3 attempts. State remains Finalizing on chain — open the admin view to inspect and retry by re-entering the wizard once the gateway is responsive. (V8 will add an admin escape hatch for prolonged outages.)",
           );
         } else {
           setErrorMsg(err instanceof Error ? err.message : String(err));
