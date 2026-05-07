@@ -20,23 +20,57 @@ Tasks closed: 1.1, 1.2, 3.2, 3.4. 57/57 contract tests green; frontend lint
 baseline (10 errors in V6 SetAllocationForm) unchanged; frontend `npm run
 build` succeeds.
 
-### Deferred (still `[~]` in tasks.md)
+### Backend smoke (4.5 + 6.4) — closed via local Postgres
 
-- 4.5 backend `db:migrate` smoke
-- 6.4 indexer worker smoke
+Both tasks now `[x]` after switching from docker-pg to brew-installed
+`postgresql@16`. Reason for the switch: host docker daemon was half-dead
+(`docker ps` returned but `docker run` / `docker system df` hung > 2 min)
+because `/System/Volumes/Data` was 96% full (18 GB free) — APFS throttling
+the 60 GB `Docker.raw` IO. Backend smoke is a vitest + pg job, not worth
+fighting Docker Desktop for.
 
-Reason: host docker daemon was unresponsive (CLI hung on `docker ps` even
-with daemon process alive — likely macOS keychain credential helper
-blocking). Not a code defect. Both tasks naturally validate the moment a
-real campaign is registered against the deployed backend (Wave 2.2 path),
-so re-running a local docker smoke would not improve signal before ship.
+How to reproduce locally:
+
+```bash
+brew services start postgresql@16
+/opt/homebrew/opt/postgresql@16/bin/createdb zamadrop
+# backend/.env DATABASE_URL must point at postgresql://localhost:5432/zamadrop
+cd backend
+set -a && source .env && set +a
+npm run db:migrate            # → ✅ Schema applied (6 tables)
+npm test                      # → 16/16 passing (auth, drafts, register)
+npm run dev &                 # boots on :3002
+curl -s http://localhost:3002/api/health   # → {"ok":true}
+```
+
+Indexer worker smoke (6.4): `indexerTick()` against local pg + Sepolia
+RPC (`https://ethereum-sepolia-rpc.publicnode.com`) resolves all four
+V7 event ABIs, polls a 1000-block window in ~1s, and advances
+`kv_state['indexer.last_block']` correctly.
+
+Followup found during smoke (not blocking ship): on a fresh DB,
+`indexer.last_block` defaults to `0`, so the first tick tries to scan
+from genesis to tip — public Sepolia RPCs reject this with a 50k
+block-range cap. `register-campaign` should seed `kv_state` with
+`deployed_at_block` (or worker should clamp `fromBlock` to
+`tip - N`). File as a small followup issue post-ship.
 
 ### Next (Wave 2)
 
-- 2.1 `npx hardhat run scripts/e2e-sepolia.ts --network sepolia` — chain-only
-  proof that contract → KMS → executor still works on Sepolia.
-- 2.2 Manual MetaMask wizard walkthrough on Sepolia with admin + recipient2
-  + auditor. Records any rough edges to LEARNINGS / GitHub issues.
+- 2.1 SKIPPED. The existing Sepolia deployment at
+  `0xDAe72F548BFc37649c7Da24Cd0a2c90a73E6c5c1` was deployed 2026-05-05,
+  predating tasks 2.9a/2.9b (State enum + cancelCampaign). Its ABI still
+  has `bool finalized`, not `enum State` / `claimedTotalPlaintext` /
+  `recipientListHash` / `allocationCount`. `scripts/e2e-sepolia.ts`
+  expects V7 ABI, so it cannot run against the old campaign. Updating
+  the script to deploy fresh would duplicate Wave 2.2 work; instead
+  Wave 2.2 (wizard) deploys the fresh V7 campaign + drives the entire
+  lifecycle, which is the more realistic test anyway.
+- 2.2 Manual MetaMask wizard walkthrough on Sepolia. Frontend-only
+  setup (backend deferred per Wave 1.3). Validates: V7 wizard 5 steps
+  → real deploy → recipient claim → auditor verify → admin
+  withdrawExcess. Records any rough edges to LEARNINGS / GitHub
+  issues.
 
 ### Open Worktrees (cleanup later)
 

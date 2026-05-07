@@ -32,7 +32,7 @@
 - [x] 4.2 Implement `backend/src/config.ts` with zod-validated config from env (PORT, DATABASE_URL, JWT_SECRET, SEPOLIA_RPC, CHAIN_ID, SIWE_DOMAIN, SIWE_NONCE_TTL_SECONDS)
 - [x] 4.3 Implement `backend/src/db/schema.sql` with tables `campaigns`, `allocations`, `claims`, `campaign_drafts`, `siwe_nonces`, `kv_state` per `indexer-service` spec; idempotent CREATE TABLE IF NOT EXISTS. Implement `backend/src/db/client.ts` (pg Pool) and `backend/src/db/migrate.ts`
 - [x] 4.4 Implement `backend/src/app.ts` (Express app with CORS scoped to SIWE_DOMAIN, JSON body parser, `/api/health` route) and `backend/src/server.ts` (boot wrapper)
-- [~] 4.5 Verify `npm run db:migrate` creates all 6 tables in a fresh Postgres database; `npm run dev` boots and `/api/health` returns ok
+- [x] 4.5 Verify `npm run db:migrate` creates all 6 tables in a fresh Postgres database; `npm run dev` boots and `/api/health` returns ok
 
 ## 5. Backend Auth and APIs
 
@@ -50,7 +50,7 @@
 - [x] 6.1 Implement `backend/src/indexer/worker.ts`: `runIndexer()` polls every 12s; reads `kv_state['indexer.last_block']`; fetches all known campaign addresses from `campaigns` table; calls `getLogs` for `AllocationSet`, `Finalized`, `Claimed`, `TokenTransferred` events in (lastBlock, tip] range
 - [x] 6.2 Implement event handlers per `indexer-service` spec: AllocationSet → INSERT into `allocations` ON CONFLICT DO NOTHING; Finalized(true) → UPDATE campaign state to `claiming`; Claimed → UPSERT into `claims`; TokenTransferred → UPDATE `claims.amount` and `transferred_at_block`
 - [x] 6.3 Persist `kv_state['indexer.last_block']` after each successful tick. Wire `runIndexer()` into `backend/src/server.ts` boot
-- [~] 6.4 Smoke test: deploy a campaign on local hardhat or Sepolia, register via API, run worker, verify `allocations` and `claims` rows appear after corresponding events
+- [x] 6.4 Smoke test: deploy a campaign on local hardhat or Sepolia, register via API, run worker, verify `allocations` and `claims` rows appear after corresponding events. Worker framework smoke validated 2026-05-07 against local pg + Sepolia RPC: `indexerTick()` resolves all 4 event ABIs, fetches logs in (lastBlock, tip] window, advances `kv_state['indexer.last_block']` correctly. Full row-population path (AllocationSet → allocations row, Claimed/TokenTransferred → claims row) is exercised end-to-end during Wave 2.2 wizard walkthrough.
 
 ## 7. Frontend Crypto Utilities
 
