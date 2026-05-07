@@ -15,18 +15,19 @@ import { ClaimStepper } from "./ClaimStepper";
 //   0 = Setup, 1 = Finalizing, 2 = Claiming, 3 = Failed
 const STATE_FAILED = 3;
 
-/** Recipient role page · spec: docs/role-page-protocol.md §4.3
+/** Recipient role page.
  *
- * Five UI states keyed off chain reads:
+ * UI states keyed off chain reads:
  *   A. Disconnected               → connect prompt
  *   B. Connected, no allocation   → "ask admin" notice
  *   C. Allocation set, !finalized → encrypted card + disabled stepper
  *   D. Finalized, !claimed        → encrypted card + active claim button
- *   E. Claimed, !transferred      → awaiting-settlement state, polls every 5s
  *   F. Transferred                → success state + balance
  *
- * Strict boundary: this page never calls publicDecrypt or executeTransfer —
- * those belong to the off-chain executor. See docs/security-notes.md §3. */
+ * The recipient signs both `claim()` and `executeTransfer()` themselves; the
+ * stepper drives an active-pull KMS decrypt + submit between them. See ADR
+ * 0001 (KMS-gated callback) and the shared util in
+ * `frontend/src/lib/kms-active-pull.ts`. */
 export default function RecipientPage() {
   const { campaignAddress } = useCampaignParam();
   const { address, isConnected } = useAccount();
@@ -66,21 +67,14 @@ export default function RecipientPage() {
 
   const claimed = claimedData === true;
 
-  // Poll `transferred[me]` every 5s while we're in state E (claimed but not yet
-  // transferred). The callback form of refetchInterval reads the latest cached
-  // value so we can stop polling automatically when the flag flips.
+  // `transferred[me]` is a one-shot read. The stepper signals when it has
+  // finished `executeTransfer` via `onClaimMined`, at which point we refetch.
   const { data: transferredData, refetch: refetchTransferred } = useReadContract({
     address: campaignAddress,
     abi: CAMPAIGN_ABI,
     functionName: "transferred",
     args: address ? [address] : undefined,
-    query: {
-      enabled: !!address,
-      refetchInterval: (query) => {
-        if (!claimed) return false;
-        return query.state.data === true ? false : 5000;
-      },
-    },
+    query: { enabled: !!address },
   });
 
   const transferred = transferredData === true;
@@ -147,7 +141,7 @@ export default function RecipientPage() {
     );
   }
 
-  // States C / D / E / F — top-line status alert.
+  // States C / D / F — top-line status alert.
   const statusAlert = transferred ? (
     <Alert variant="info">
       <AlertTitle>Settlement complete</AlertTitle>
@@ -155,14 +149,6 @@ export default function RecipientPage() {
         Your tokens have been transferred. The amount is now visible on-chain
         via the ERC-20 Transfer event — that's the documented privacy boundary
         (encrypted up to claim, public on settlement).
-      </AlertDescription>
-    </Alert>
-  ) : claimed ? (
-    <Alert variant="warning">
-      <AlertTitle>Awaiting settlement</AlertTitle>
-      <AlertDescription>
-        You've claimed. The off-chain executor is now decrypting your amount via
-        KMS and submitting the ERC-20 transfer. Typically ~30 seconds.
       </AlertDescription>
     </Alert>
   ) : isFinalized ? (

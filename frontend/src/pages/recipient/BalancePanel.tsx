@@ -18,7 +18,7 @@ interface BalancePanelProps {
 }
 
 /** Live ERC-20 balance for the connected recipient. Polls every 8s so it
- * picks up the executor's `executeTransfer` settlement without a manual refresh. */
+ * picks up the `executeTransfer` settlement without a manual refresh. */
 export function BalancePanel({
   tokenAddress,
   account,

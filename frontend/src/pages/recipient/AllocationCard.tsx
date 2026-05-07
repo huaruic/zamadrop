@@ -67,8 +67,8 @@ export function AllocationCard({
         <CardTitle>Your encrypted allocation</CardTitle>
         <CardDescription>
           The amount lives on-chain as a ciphertext handle. Only your wallet can
-          unwrap it via re-encryption — no one else (admin, auditor, executor)
-          can read your number.
+          unwrap it via re-encryption — no one else (admin, auditor) can
+          decrypt your number.
         </CardDescription>
       </CardHeader>
 

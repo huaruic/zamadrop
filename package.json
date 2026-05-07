@@ -7,9 +7,7 @@
     "test": "hardhat test",
     "coverage": "hardhat coverage",
     "lint": "eslint . --ext .ts,.sol",
-    "clean": "hardhat clean",
-    "executor": "hardhat run scripts/executor.ts --network sepolia",
-    "executor:local": "hardhat run scripts/executor.ts --network hardhat"
+    "clean": "hardhat clean"
   },
   "devDependencies": {
     "@fhevm/hardhat-plugin": "^0.4.2",
