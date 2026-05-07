@@ -65,6 +65,49 @@ export function ClaimStepper({
   const [settlePhase, setSettlePhase] = useState<SettlePhase>("idle");
   const [settleError, setSettleError] = useState<string | null>(null);
 
+  /** Active-pull settle: decrypt pendingClaimHandle via Gateway, then submit
+   * executeTransfer. Used by both `handleClaim` (immediately after claim()
+   * mines) AND `handleResumeSettle` (when the user lands on the page with
+   * `claimed === true && transferred === false` — e.g. they refreshed mid-
+   * flow or dismissed the second wallet popup). Pure active-pull, never
+   * re-calls claim(). */
+  const settle = async () => {
+    if (!walletClient) throw new Error("Wallet client unavailable.");
+    const account = walletClient.account;
+    if (!account) throw new Error("No wallet account connected.");
+    if (!publicClient) throw new Error("Public client unavailable.");
+
+    setSettlePhase("decrypting");
+    const fhevm = await getFhevmInstance();
+    setSettlePhase("submitting");
+    await pullAndExecuteTransfer(campaignAddress, account.address, {
+      walletClient,
+      publicClient,
+      fhevm,
+      callerAddress: account.address,
+    });
+    setSettlePhase("done");
+    onClaimMined();
+  };
+
+  /** Surface the right error copy for both handlers. */
+  const handleSettleError = (err: unknown) => {
+    if (err instanceof CallbackError) {
+      if (err.kind === "decrypt_failed") {
+        setSettleError(
+          `${err.message} Click "Resume settlement" once the gateway is healthy.`,
+        );
+      } else {
+        setSettleError(
+          `${err.message} The transfer transaction failed — contact the campaign admin if this persists.`,
+        );
+      }
+    } else {
+      setSettleError(err instanceof Error ? err.message : String(err));
+    }
+    setSettlePhase("idle");
+  };
+
   const handleClaim = async () => {
     setSettleError(null);
     try {
@@ -78,41 +121,22 @@ export function ClaimStepper({
       await publicClient.waitForTransactionReceipt({ hash: claimHash });
       onClaimMined();
 
-      if (!walletClient) throw new Error("Wallet client unavailable.");
-      const account = walletClient.account;
-      if (!account) throw new Error("No wallet account connected.");
-
-      // Step 2: pull KMS decryption + submit executeTransfer — recipient
-      // signs the second wallet popup.
-      setSettlePhase("decrypting");
-      const fhevm = await getFhevmInstance();
-      // Note: pullAndExecuteTransfer prompts the wallet for executeTransfer
-      // immediately after the Gateway returns; we flip to "submitting" right
-      // before delegating so the UI text reflects the second popup.
-      setSettlePhase("submitting");
-      await pullAndExecuteTransfer(campaignAddress, account.address, {
-        walletClient,
-        publicClient,
-        fhevm,
-        callerAddress: account.address,
-      });
-      setSettlePhase("done");
-      onClaimMined();
+      // Step 2: active-pull settle — recipient signs the second wallet popup.
+      await settle();
     } catch (err) {
-      if (err instanceof CallbackError) {
-        if (err.kind === "decrypt_failed") {
-          setSettleError(
-            `${err.message} You can retry by clicking Claim again once the gateway is healthy.`,
-          );
-        } else {
-          setSettleError(
-            `${err.message} The transfer transaction failed — contact the campaign admin if this persists.`,
-          );
-        }
-      } else {
-        setSettleError(err instanceof Error ? err.message : String(err));
-      }
-      setSettlePhase("idle");
+      handleSettleError(err);
+    }
+  };
+
+  /** Resume Step 2 only — when claim() already mined in a prior visit but
+   * the active-pull never completed (refresh, dismissed wallet popup, etc.).
+   * Calling claim() again would revert AlreadyClaimed. */
+  const handleResumeSettle = async () => {
+    setSettleError(null);
+    try {
+      await settle();
+    } catch (err) {
+      handleSettleError(err);
     }
   };
 
@@ -202,6 +226,16 @@ export function ClaimStepper({
                   {settledHandle ? shortHandle(settledHandle) : "Loading…"}
                 </div>
               </div>
+              {/* Resume button: fires only when the active-pull never
+                  started or got interrupted. Lets a recipient who dismissed
+                  the second wallet popup (or refreshed mid-flow) finish
+                  Step 2 without re-calling claim() — that would revert
+                  AlreadyClaimed. Hidden while settle() is in flight. */}
+              {settlePhase === "idle" && !settleError && (
+                <Button onClick={handleResumeSettle}>
+                  Resume settlement
+                </Button>
+              )}
               {settlePhase === "decrypting" && (
                 <Alert variant="info">
                   <AlertTitle>Decrypting amount via KMS…</AlertTitle>
@@ -219,10 +253,15 @@ export function ClaimStepper({
                 </Alert>
               )}
               {settleError && (
-                <Alert variant="destructive">
-                  <AlertTitle>Settlement failed</AlertTitle>
-                  <AlertDescription>{settleError}</AlertDescription>
-                </Alert>
+                <div className="space-y-2">
+                  <Alert variant="destructive">
+                    <AlertTitle>Settlement failed</AlertTitle>
+                    <AlertDescription>{settleError}</AlertDescription>
+                  </Alert>
+                  <Button onClick={handleResumeSettle} variant="outline">
+                    Retry settlement
+                  </Button>
+                </div>
               )}
             </div>
           )}
