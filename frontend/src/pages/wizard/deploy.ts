@@ -33,6 +33,10 @@ import {
 } from "viem";
 
 import { CAMPAIGN_ABI, ERC20_ABI } from "@/abis";
+import {
+  CallbackError,
+  pullAndCallbackFinalize,
+} from "@/lib/kms-active-pull";
 
 import {
   CAMPAIGN_CONSTRUCTOR_ABI,
@@ -89,17 +93,6 @@ export class FinalizeFailureError extends Error {
   }
 }
 
-/** Active-pull retry budget. Each attempt asks the Gateway to run threshold
- * MPC; on a healthy network this returns in ~3-10s. Three attempts with 5s
- * backoff covers transient network blips while still bounding total wait. */
-const PUBLIC_DECRYPT_MAX_ATTEMPTS = 3;
-const PUBLIC_DECRYPT_RETRY_MS = 5_000;
-
-/** State enum numeric values mirroring `enum State` in ZamaDropCampaign.sol. */
-const STATE_FINALIZING = 1;
-const STATE_CLAIMING = 2;
-const STATE_FAILED = 3;
-
 /** Run the 5 sub-steps end-to-end. Returns the deployed campaign address.
  * Throws on any unrecoverable error — caller is responsible for rendering. */
 export async function executeDeployment(
@@ -142,7 +135,27 @@ export async function executeDeployment(
 
   // ── 5.5 Verify with KMS (active pull) ────────────────────────────
   ctx.onProgress(5, "Asking gateway to decrypt sum check…");
-  await pullAndCallback(ctx, campaignAddress);
+  try {
+    const { result } = await pullAndCallbackFinalize(campaignAddress, {
+      walletClient: ctx.walletClient,
+      publicClient: ctx.publicClient,
+      fhevm: ctx.fhevm,
+      callerAddress: ctx.adminAddress,
+    });
+    if (!result) {
+      throw new FinalizeFailureError(
+        "KMS reports the sum of allocations does not match declaredTotal. State is now Failed; use cancelCampaign in the admin view to recover funds, then redeploy with corrected amounts.",
+        campaignAddress,
+        "failed",
+      );
+    }
+  } catch (err) {
+    if (err instanceof FinalizeFailureError) throw err;
+    if (err instanceof CallbackError && err.kind === "decrypt_failed") {
+      throw new FinalizeFailureError(err.message, campaignAddress, "timeout");
+    }
+    throw err;
+  }
   ctx.onProgress(5, "Campaign live.");
 
   return campaignAddress;
@@ -277,119 +290,6 @@ async function finalizeCampaign(
   } catch {
     // ignore — non-matching log shapes throw, we only care about the receipt
     // semantically.
-  }
-}
-
-/**
- * Active-pull KMS verification + callback submission.
- *
- * Replaces the legacy passive `waitForClaiming` polling loop. The encrypted
- * `finalizeCheckHandle` is already on chain and `makePubliclyDecryptable`'d
- * by `finalize()`; we ask the Gateway directly via relayer SDK
- * `publicDecrypt`, get back the threshold-MPC signed result, and submit
- * `callbackFinalize` ourselves with admin's signature.
- *
- * Failure cases:
- *  - publicDecrypt throws repeatedly → `FinalizeFailureError("timeout")`,
- *    state stays Finalizing on chain (admin can retry later).
- *  - publicDecrypt returns `false` → submit callback so state moves to
- *    Failed, then throw `FinalizeFailureError("failed")` with cancelCampaign
- *    remediation hint.
- *  - callbackFinalize tx reverts because state already advanced (Gateway
- *    happened to push concurrently) → swallow the revert if state is now
- *    Claiming or Failed; otherwise rethrow.
- */
-async function pullAndCallback(
-  ctx: DeployContext,
-  campaignAddress: Address,
-): Promise<void> {
-  // Guard: someone (Gateway pushing in parallel, or a previous wizard run)
-  // may have already advanced past Finalizing. Skip work in that case.
-  const stateBefore = (await ctx.publicClient.readContract({
-    address: campaignAddress,
-    abi: CAMPAIGN_ABI,
-    functionName: "state",
-  })) as number;
-  if (stateBefore === STATE_CLAIMING) return;
-  if (stateBefore === STATE_FAILED) {
-    throw new FinalizeFailureError(
-      "Campaign already in Failed state. Use cancelCampaign in the admin view to recover funds, then redeploy with corrected amounts.",
-      campaignAddress,
-      "failed",
-    );
-  }
-  if (stateBefore !== STATE_FINALIZING) {
-    throw new Error(
-      `Unexpected campaign state ${stateBefore} at start of step 5.5; expected Finalizing.`,
-    );
-  }
-
-  // Read the on-chain ebool handle that finalize() committed.
-  const handle = (await ctx.publicClient.readContract({
-    address: campaignAddress,
-    abi: CAMPAIGN_ABI,
-    functionName: "finalizeCheckHandle",
-  })) as Hex;
-
-  // Active pull with bounded retries. publicDecrypt asks the Gateway to run
-  // threshold MPC and return a signed result; ~3-10s on a healthy day.
-  let decrypted: Awaited<ReturnType<typeof ctx.fhevm.publicDecrypt>> | undefined;
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= PUBLIC_DECRYPT_MAX_ATTEMPTS; attempt++) {
-    try {
-      decrypted = await ctx.fhevm.publicDecrypt([handle]);
-      break;
-    } catch (err) {
-      lastError = err;
-      if (attempt < PUBLIC_DECRYPT_MAX_ATTEMPTS) {
-        await new Promise((r) => setTimeout(r, PUBLIC_DECRYPT_RETRY_MS));
-      }
-    }
-  }
-  if (!decrypted) {
-    const msg = lastError instanceof Error ? lastError.message : String(lastError);
-    throw new FinalizeFailureError(
-      `Gateway publicDecrypt failed after ${PUBLIC_DECRYPT_MAX_ATTEMPTS} attempts (${msg}). State remains Finalizing on chain. Re-enter the wizard once the gateway is responsive, or wait for V8's admin escape hatch for prolonged outages.`,
-      campaignAddress,
-      "timeout",
-    );
-  }
-
-  const sumMatched = decrypted.clearValues[handle] as boolean;
-  const proof = decrypted.decryptionProof;
-
-  // Submit callbackFinalize ourselves. If Gateway concurrently pushed and
-  // already advanced state, our tx will revert NotFinalizing; tolerate that
-  // by re-reading state and trusting whatever is there.
-  try {
-    const tx = await ctx.walletClient.writeContract({
-      abi: CAMPAIGN_ABI,
-      address: campaignAddress,
-      functionName: "callbackFinalize",
-      args: [sumMatched, proof],
-      account: ctx.adminAddress,
-      chain: ctx.walletClient.chain,
-    });
-    await ctx.publicClient.waitForTransactionReceipt({ hash: tx });
-  } catch (err) {
-    const stateAfter = (await ctx.publicClient.readContract({
-      address: campaignAddress,
-      abi: CAMPAIGN_ABI,
-      functionName: "state",
-    })) as number;
-    if (stateAfter !== STATE_CLAIMING && stateAfter !== STATE_FAILED) {
-      throw err;
-    }
-    // State already advanced by a concurrent Gateway push — fall through to
-    // honour the on-chain truth instead of our own (now-redundant) result.
-  }
-
-  if (!sumMatched) {
-    throw new FinalizeFailureError(
-      "KMS reports the sum of allocations does not match declaredTotal. State is now Failed; use cancelCampaign in the admin view to recover funds, then redeploy with corrected amounts.",
-      campaignAddress,
-      "failed",
-    );
   }
 }
 
