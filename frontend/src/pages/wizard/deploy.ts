@@ -18,6 +18,7 @@ import type { FhevmInstance } from "@zama-fhe/relayer-sdk/web";
 import {
   decodeEventLog,
   encodeFunctionData,
+  getAddress,
   type Address,
   type Hash,
   type Hex,
@@ -207,9 +208,15 @@ async function setOneAllocation(
 ): Promise<Hash> {
   // Encrypt the uint64 amount — buffer is bound to (campaign, admin) per the
   // FHE input verifier's expectations.
+  //
+  // The relayer SDK's createEncryptedInput requires EIP-55 checksum addresses
+  // (it does `getAddress(x) === x` strict-equal). viem returns
+  // receipt.contractAddress in lowercase straight from the RPC, and
+  // wagmi-provided wallet addresses can also vary. Normalize both here so
+  // the FHE proof verification sees the canonical form the contract expects.
   const buffer = ctx.fhevm.createEncryptedInput(
-    campaignAddress,
-    ctx.adminAddress,
+    getAddress(campaignAddress),
+    getAddress(ctx.adminAddress),
   );
   buffer.add64(recipient.amount);
   const ciphertexts = await buffer.encrypt();
