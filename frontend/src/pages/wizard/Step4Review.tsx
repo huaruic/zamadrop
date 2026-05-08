@@ -227,6 +227,11 @@ export default function Step4Review() {
       <Card>
         <CardHeader>
           <CardTitle>Confirm and deploy</CardTitle>
+          <CardDescription>
+            The next screen explains each on-chain step before anything is
+            sent to your wallet. Deployment starts only after you click the
+            explicit start button there.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 font-mono text-xs">
           <label className="flex items-start gap-2">
@@ -269,7 +274,7 @@ export default function Step4Review() {
           Back
         </Button>
         <Button onClick={handleStartDeploy} disabled={!canStartDeploy}>
-          Start Deploy
+          Continue to deployment steps
         </Button>
       </div>
     </div>

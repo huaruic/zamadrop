@@ -52,20 +52,27 @@ export function SetAllocationForm({
   // When tx mined, finalize state, clear form, notify parent.
   useEffect(() => {
     if (!isMined || !pendingHash) return;
-    setStage("done");
-    setLastTx(pendingHash);
-    setRecipient("");
-    setAmount("");
-    onSuccess();
-    resetWrite();
+    const done = setTimeout(() => {
+      setStage("done");
+      setLastTx(pendingHash);
+      setRecipient("");
+      setAmount("");
+      onSuccess();
+      resetWrite();
+    }, 0);
     // Drop the "done" badge after a beat so subsequent submits feel fresh.
-    const t = setTimeout(() => setStage("idle"), 4000);
-    return () => clearTimeout(t);
+    const reset = setTimeout(() => setStage("idle"), 4000);
+    return () => {
+      clearTimeout(done);
+      clearTimeout(reset);
+    };
   }, [isMined, pendingHash, onSuccess, resetWrite]);
 
   // Track mining stage transition.
   useEffect(() => {
-    if (isMining && stage === "awaiting-wallet") setStage("mining");
+    if (!isMining || stage !== "awaiting-wallet") return;
+    const t = setTimeout(() => setStage("mining"), 0);
+    return () => clearTimeout(t);
   }, [isMining, stage]);
 
   const recipientValid =
@@ -121,28 +128,29 @@ export function SetAllocationForm({
 
   const stageMessage =
     stage === "encrypting"
-      ? "Encrypting…"
+      ? "Encrypting allocation…"
       : stage === "awaiting-wallet"
         ? "Awaiting wallet confirmation…"
         : stage === "mining"
-          ? "Mining…"
+          ? "Submitting on-chain…"
           : stage === "done"
-            ? "✓ Set"
+            ? "✓ Saved"
             : null;
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Set Allocation</CardTitle>
+        <CardTitle>Manual allocation recovery</CardTitle>
         <CardDescription>
-          Encrypt the amount in-browser, submit it on-chain. Each recipient may
-          only be set once.
+          Advanced path for setup recovery. Use this only if the normal deploy
+          flow did not finish configuring every recipient. Each recipient can
+          only be written once.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="recipient">Recipient address</Label>
+            <Label htmlFor="recipient">Recipient wallet</Label>
             <Input
               id="recipient"
               placeholder="0x…"
@@ -161,7 +169,7 @@ export function SetAllocationForm({
 
           <div className="space-y-1.5">
             <Label htmlFor="amount">
-              Amount{symbol ? ` · ${symbol}` : ""}
+              Allocation amount{symbol ? ` · ${symbol}` : ""}
             </Label>
             <Input
               id="amount"
@@ -182,7 +190,7 @@ export function SetAllocationForm({
 
           <div className="flex flex-wrap items-center gap-3 pt-1">
             <Button type="submit" disabled={submitDisabled}>
-              Set allocation
+              Submit manual allocation
             </Button>
             {stageMessage && (
               <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
@@ -190,6 +198,11 @@ export function SetAllocationForm({
               </span>
             )}
           </div>
+
+          <p className="text-sm text-muted-foreground">
+            This recovery tool encrypts the amount in your browser before
+            writing the recipient allocation on-chain.
+          </p>
 
           {disabled && disabledReason && (
             <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">

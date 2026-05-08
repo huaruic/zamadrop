@@ -9,9 +9,9 @@ interface TabDef {
   to: string;
   label: string;
   end?: boolean;
-  /** Universal tab — no Active/Preview suffix; everyone can see. */
+  /** Universal tab — everyone can see. */
   publicView?: boolean;
-  /** Which role grants Active state on this tab (vs Preview for non-role wallets). */
+  /** Which role grants access to this tab. */
   roleKey?: "isAdmin" | "isRecipient" | "isAuditor";
 }
 
@@ -28,6 +28,11 @@ export default function CampaignLayout() {
 
   const { address: walletAddress, isConnected } = useAccount();
   const role = useRoleInfo(walletAddress, campaignAddress);
+  const visibleTabs = TABS.filter((tab) => {
+    if (tab.publicView) return true;
+    if (!isConnected || !tab.roleKey) return false;
+    return role[tab.roleKey];
+  });
 
   if (!campaignAddress) {
     return (
@@ -63,10 +68,7 @@ export default function CampaignLayout() {
       </header>
 
       <nav className="mb-8 flex gap-1 overflow-x-auto border-b border-border">
-        {TABS.map((tab) => {
-          const hasRole = tab.roleKey ? role[tab.roleKey] : false;
-          // Active = you have the role for this tab. Preview = you don't.
-          // Suffix only renders on role-gated tabs (not on Overview).
+        {visibleTabs.map((tab) => {
           return (
             <NavLink
               key={tab.label}
@@ -77,11 +79,7 @@ export default function CampaignLayout() {
                   "relative px-4 py-2.5 transition-colors",
                   isActive
                     ? "text-primary"
-                    : tab.publicView
-                      ? "text-foreground hover:text-primary"
-                      : hasRole
-                        ? "text-foreground hover:text-primary"
-                        : "text-muted-foreground/60 hover:text-muted-foreground",
+                    : "text-foreground hover:text-primary",
                 )
               }
             >
@@ -90,16 +88,6 @@ export default function CampaignLayout() {
                   <span className="font-mono text-xs uppercase tracking-[0.2em]">
                     {tab.label}
                   </span>
-                  {!tab.publicView && (
-                    <span
-                      className={cn(
-                        "font-mono text-[9px] uppercase tracking-[0.18em]",
-                        hasRole ? "text-primary" : "text-muted-foreground/70",
-                      )}
-                    >
-                      · {hasRole ? "active" : "preview"}
-                    </span>
-                  )}
                   {isActive && (
                     <span className="absolute inset-x-0 -bottom-px h-px bg-primary" />
                   )}

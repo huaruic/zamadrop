@@ -30,8 +30,10 @@ import { useWizardStore } from "./state";
  *
  * Spec: admin-deployment-flow §"Step 5 — 5 个上链子步骤"
  *
- *   - On mount: read fhevm instance, walletClient, publicClient, do an L3
- *     final check (snapshot version matches store), then call
+ *   - Initial render: show a preflight explainer for the 5 sub-steps. No
+ *     deployment side effect runs until the user clicks Start deployment.
+ *   - After explicit start: read fhevm instance, walletClient, publicClient,
+ *     do an L3 final check (snapshot version matches store), then call
  *     executeDeployment with progress callbacks wired into the store.
  *   - Render the 5 sub-step strip with live status + recipient counter for
  *     5.3.
@@ -55,6 +57,22 @@ const STEP_LABELS: Record<DeploySubStep, string> = {
   3: "5.3 setAllocation × N",
   4: "5.4 finalize()",
   5: "5.5 Verify with KMS (active pull)",
+};
+
+const STEP_PURPOSES: Record<DeploySubStep, string> = {
+  1: "Create the campaign contract with the locked recipient fingerprint and declared total.",
+  2: "Transfer the declared token total into the deployed campaign contract.",
+  3: "Write one encrypted allocation per recipient. This is the longest step because it submits N transactions.",
+  4: "Submit finalize() so the contract asks KMS to verify the allocation sum.",
+  5: "Pull the KMS result and self-submit callbackFinalize so the campaign becomes live.",
+};
+
+const STEP_DETAILS: Partial<Record<DeploySubStep, string>> = {
+  1: "One wallet signature. A new campaign address is created here.",
+  2: "One wallet signature. Skips on retry if the campaign is already funded.",
+  3: "One wallet signature per recipient. Completed recipients stay skipped on retry.",
+  4: "One wallet signature. Safe to retry after partial failures.",
+  5: "No new campaign is created here. The frontend asks the gateway for a signed decrypt result and submits the callback.",
 };
 
 /** Conservative lower bound for ETH balance before we let the user click
@@ -124,10 +142,18 @@ export default function Step5Deploy() {
    * `startedRef` gate is reset alongside this so a single user click cleanly
    * re-runs from the top of `executeDeployment`. */
   const [retryNonce, setRetryNonce] = useState(0);
+  const hasExistingExecutionState =
+    status !== "draft" ||
+    deployStep !== 0 ||
+    campaignAddress !== null ||
+    allocatedSoFar.length > 0;
+  const [deploymentStarted, setDeploymentStarted] = useState(
+    hasExistingExecutionState,
+  );
 
   // Guard against StrictMode double-invoke firing the deploy twice. We only
   // run once per page mount; Retry resets this in tandem with `retryNonce`.
-  const startedRef = useRef(false);
+  const startedRef = useRef(hasExistingExecutionState);
 
   // Wallet popup hint: schedule a one-shot tick after POPUP_HINT_DELAY_MS to
   // flip the hint on, and clear/reset it asynchronously when the phase
@@ -149,6 +175,7 @@ export default function Step5Deploy() {
   }, [phase, phaseStartedAt]);
 
   useEffect(() => {
+    if (!deploymentStarted) return;
     if (startedRef.current) return;
     // Wallet/clients are guarded at render time below; if we got here, they
     // exist. We still dereference them lazily to make the linter happy.
@@ -320,50 +347,46 @@ export default function Step5Deploy() {
     setCampaignAddress,
     setStatus,
     retryNonce,
+    deploymentStarted,
   ]);
 
-  // Render-time guards (T2): if the user landed on Step 5 without a wallet
-  // connection, show actionable cards instead of a frozen progress strip.
-  if (!walletAddress) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Connect your wallet</CardTitle>
-          <CardDescription>
-            Step 5 deploys directly from the connected admin EOA. Connect a
-            wallet on Sepolia to continue.
-          </CardDescription>
-        </CardHeader>
-      </Card>
-    );
-  }
-  if (!walletClient || !publicClient) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Initializing wallet client…</CardTitle>
-          <CardDescription>
-            Waiting for wagmi to provision the wallet/public clients. This
-            should resolve within a second; refresh if it persists.
-          </CardDescription>
-        </CardHeader>
-      </Card>
-    );
-  }
-
   const N = recipients.length;
-  const description =
+  const executionDescription =
     N > 0
       ? `${N} recipients · ${N + 3} wallet signatures: 1 deploy, 1 fund, ${N} setAllocation, 1 finalize. Step 5.5 verifies via KMS automatically (no signature).`
       : "N+3 wallet signatures: 1 deploy, 1 fund, N setAllocation, 1 finalize. Step 5.5 verifies via KMS automatically (no signature).";
+  const walletReady = Boolean(walletAddress && walletClient && publicClient);
+  const canStartDeployment =
+    walletReady &&
+    snapshot !== null &&
+    recipients.length > 0 &&
+    auditor.length > 0;
+
+  const handleStartDeployment = () => {
+    if (!canStartDeployment) return;
+    setErrorMsg(null);
+    setErrorRecovery(null);
+    setRegistrationWarning(null);
+    setDetail("");
+    setPhase(null);
+    setTxHash(null);
+    setPhaseStartedAt(null);
+    setDeployStep(0);
+    setStatus("draft");
+    startedRef.current = false;
+    setDeploymentStarted(true);
+  };
 
   const handleRetry = () => {
     setErrorMsg(null);
     setErrorRecovery(null);
     setRegistrationWarning(null);
+    setDetail("");
     setPhase(null);
     setTxHash(null);
     setPhaseStartedAt(null);
+    setDeployStep(0);
+    setStatus("draft");
     startedRef.current = false;
     setRetryNonce((n) => n + 1);
   };
@@ -378,14 +401,82 @@ export default function Step5Deploy() {
     }
   };
 
+  if (!deploymentStarted) {
+    return (
+      <div className="space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle>Ready to deploy</CardTitle>
+            <CardDescription>
+              Review the five on-chain steps below. No transaction is sent
+              until you click Start deployment.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <ol className="space-y-3">
+              {([1, 2, 3, 4, 5] as DeploySubStep[]).map((step) => (
+                <StepRow
+                  key={step}
+                  step={step}
+                  status="pending"
+                  purpose={STEP_PURPOSES[step]}
+                  compactDetail={STEP_DETAILS[step]}
+                />
+              ))}
+            </ol>
+
+            {!walletAddress && (
+              <Alert variant="muted">
+                <AlertTitle>Connect your wallet to continue</AlertTitle>
+                <AlertDescription>
+                  Step 5 deploys directly from the connected admin wallet on
+                  Sepolia.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {walletAddress && (!walletClient || !publicClient) && (
+              <Alert variant="muted">
+                <AlertTitle>Initializing wallet client…</AlertTitle>
+                <AlertDescription>
+                  Waiting for wagmi to provision the wallet and public clients
+                  before deployment can start.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {!snapshot && (
+              <Alert variant="destructive">
+                <AlertTitle>Snapshot missing</AlertTitle>
+                <AlertDescription>
+                  Return to Step 4 and recapture the snapshot before starting
+                  deployment.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <div className="flex justify-end">
+              <Button
+                onClick={handleStartDeployment}
+                disabled={!canStartDeployment}
+              >
+                Start deployment
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <CardTitle>Deploying campaign</CardTitle>
-              <CardDescription>{description}</CardDescription>
+              <CardTitle>Deployment in progress</CardTitle>
+              <CardDescription>{executionDescription}</CardDescription>
             </div>
             <Badge
               variant={
@@ -402,43 +493,31 @@ export default function Step5Deploy() {
         </CardHeader>
         <CardContent>
           <ol className="space-y-2">
-            {([1, 2, 3, 4, 5] as DeploySubStep[]).map((s) => {
+            {([1, 2, 3, 4, 5] as DeploySubStep[]).map((step) => {
               const sub: SubStepStatus =
-                errorMsg && s === deployStep
+                errorMsg && step === deployStep
                   ? "error"
-                  : deployStep > s
+                  : deployStep > step
                     ? "done"
-                    : deployStep === s
+                    : deployStep === step
                       ? "active"
                       : "pending";
-              const isActive = deployStep === s;
+              const isActive = deployStep === step;
               return (
-                <li key={s} className="flex items-start gap-3">
-                  <SubStepDot status={sub} />
-                  <div className="flex-1 font-mono text-xs">
-                    <div className="font-semibold">
-                      {STEP_LABELS[s]}
-                      {s === 3 && (deployStep === 3 || deployStep > 3) && (
-                        <span className="ml-2 text-muted-foreground">
-                          {allocatedSoFar.length}/{recipients.length}
-                        </span>
-                      )}
-                    </div>
-                    {isActive && detail && (
-                      <div className="text-muted-foreground">{detail}</div>
-                    )}
-                    {isActive && txHash && (
-                      <a
-                        href={`${ETHERSCAN_BASE}/tx/${txHash}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-foreground hover:text-primary hover:underline"
-                      >
-                        View on Etherscan →
-                      </a>
-                    )}
-                  </div>
-                </li>
+                <StepRow
+                  key={step}
+                  step={step}
+                  status={sub}
+                  purpose={STEP_PURPOSES[step]}
+                  compactDetail={STEP_DETAILS[step]}
+                  trailingCount={
+                    step === 3 && (deployStep === 3 || deployStep > 3)
+                      ? `${allocatedSoFar.length}/${recipients.length}`
+                      : undefined
+                  }
+                  liveDetail={isActive && detail ? detail : undefined}
+                  txHash={isActive ? txHash : null}
+                />
               );
             })}
           </ol>
@@ -543,6 +622,58 @@ function SubStepDot({ status }: { status: SubStepStatus }) {
           ? "bg-destructive"
           : "bg-border";
   return <span className={`inline-block h-2.5 w-2.5 rounded-full ${cls}`} />;
+}
+
+function StepRow({
+  step,
+  status,
+  purpose,
+  compactDetail,
+  trailingCount,
+  liveDetail,
+  txHash,
+}: {
+  step: DeploySubStep;
+  status: SubStepStatus;
+  purpose: string;
+  compactDetail?: string;
+  trailingCount?: string;
+  liveDetail?: string;
+  txHash?: Hex | null;
+}) {
+  return (
+    <li className="flex items-start gap-3">
+      <SubStepDot status={status} />
+      <div className="flex-1 font-mono text-xs">
+        <div className="font-semibold">
+          {STEP_LABELS[step]}
+          {trailingCount && (
+            <span className="ml-2 text-muted-foreground">{trailingCount}</span>
+          )}
+        </div>
+        <div className="mt-1 text-muted-foreground">{purpose}</div>
+        {compactDetail && (
+          <details className="mt-1 text-muted-foreground">
+            <summary className="cursor-pointer list-none text-[11px] uppercase tracking-[0.18em]">
+              Details
+            </summary>
+            <p className="mt-1">{compactDetail}</p>
+          </details>
+        )}
+        {liveDetail && <div className="mt-1 text-muted-foreground">{liveDetail}</div>}
+        {txHash && (
+          <a
+            href={`${ETHERSCAN_BASE}/tx/${txHash}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 inline-block text-foreground hover:text-primary hover:underline"
+          >
+            View on Etherscan →
+          </a>
+        )}
+      </div>
+    </li>
+  );
 }
 
 function SuccessCard({
