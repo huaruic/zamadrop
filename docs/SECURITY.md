@@ -277,6 +277,20 @@ await campaign.write.executeTransfer([user, amount, proof]);
 
 - 多 stakeholder campaign 允许 `auditor` 是 Gnosis Safe (2-of-N) 而非 EOA。合约改动很小（`auditor` 已经是 `address`），但链下 re-encryption flow 需要支持 Safe 签名，relayer SDK v0.x 还没覆盖
 
+### 8.6 Finalizing 状态长时间锁死 · 待 V8（mainnet 前必做，v0.x 已知边界）
+
+**已知边界**：合约状态机 `Setup → Finalizing → Claiming/Failed`，进入 `Finalizing` 后只有 `callbackFinalize(result, proof)` 能推进。V7 起 admin 钱包用 relayer SDK `publicDecrypt` 主动 pull KMS 签名 + 自己提交（[ADR 0003](./ADR/0003-frontend-as-primary-executor.md)、`frontend/src/lib/kms-active-pull.ts`、`scripts/recover-stuck-finalize.ts`），把常见的 "Gateway missed event" 失败模式从 30+ 分钟死锁压到 ~10-15s。
+
+但如果 **KMS Gateway 真的不可用**（网络分区、threshold validator quorum 跌破、Zama 基础设施宕机数小时+），active-pull 也拿不到合法签名，campaign 资金会卡在 `Finalizing` 直到 Gateway 恢复。所有现有出口都关闭：`claim()` / `withdrawExcess()` 要 `Claiming`，`cancelCampaign()` 要 `Failed`，`setAllocation()` / `finalize()` 要 `Setup`。
+
+**v0.x 接受这个边界的理由**：
+
+1. V7 active-pull 上线以来未观测到 Gateway 完全不可达的实例（仅观测到 30+ 分钟级的 "missed event" 卡死，由 active-pull 解锁）
+2. testnet/demo 部署没有真实资金风险，丢失的 campaign 直接重新部署
+3. mainnet 真金部署不在 v0.x roadmap
+
+**v1 mainnet 前的解决路径**：[`openspec/changes/v8-finalize-recovery/`](../openspec/changes/v8-finalize-recovery/) 的 escape-hatch 设计（新增 `TimedOut` 状态 + `adminTimeoutCancel()` 函数 + `cancelCampaign(TimedOut → Failed)`，构造时配置 `finalizeEscapeTimeout`）已经 Codex 评审过，proposal/design/tasks 完整保留。当前状态见 [`v8-finalize-recovery/STATUS.md`](../openspec/changes/v8-finalize-recovery/STATUS.md)，估 6-8 小时（最小可行版本 ~3 小时，去掉 KMS 迟到恢复路径）。
+
 ---
 
 ## 8.5 setAllocationsBatch — 16 recipients per call is a protocol bound, not a config
