@@ -27,15 +27,68 @@ function shortAddr(a: string) {
   return `${a.slice(0, 8)}…${a.slice(-6)}`;
 }
 
-async function encryptAmount(
+/** Maximum recipients per setAllocationsBatch call. Mirrors the frontend
+ * wizard's BATCH_SIZE (HCU-bounded). See AGENTS.md invariant #4 and
+ * frontend/src/pages/wizard/deploy.ts. */
+const BATCH_SIZE = 16;
+
+async function encryptAmountsBatch(
   contractAddress: string,
   senderAddress: string,
-  value: bigint,
+  values: bigint[],
 ) {
   const input = hre.fhevm.createEncryptedInput(contractAddress, senderAddress);
-  input.add64(value);
+  for (const v of values) input.add64(v);
   const enc = await input.encrypt();
-  return { handle: enc.handles[0], proof: enc.inputProof };
+  return { handles: enc.handles, proof: enc.inputProof };
+}
+
+type RecipientAlloc = { address: string; amount: bigint };
+
+/** Set allocations via the batched primitive, mirroring frontend
+ * `setAllocationsBatched` in deploy.ts. Filters already-set recipients
+ * (idempotent resume), then chunks into ≤ BATCH_SIZE batches. Exercises
+ * the same ABI path the wizard uses, so any contract regression that
+ * affects the batch primitive surfaces equally in CLI runs. */
+async function setAllocationsBatched(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  campaign: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin: any,
+  recipients: RecipientAlloc[],
+): Promise<void> {
+  const pending: RecipientAlloc[] = [];
+  for (const r of recipients) {
+    if (await campaign.allocationSet(r.address)) {
+      console.log(`      already set for ${shortAddr(r.address)} — skip`);
+    } else {
+      pending.push(r);
+    }
+  }
+  if (pending.length === 0) return;
+
+  const totalBatches = Math.ceil(pending.length / BATCH_SIZE);
+  for (let i = 0; i < pending.length; i += BATCH_SIZE) {
+    const chunk = pending.slice(i, i + BATCH_SIZE);
+    const batchIdx = Math.floor(i / BATCH_SIZE) + 1;
+    console.log(
+      `      batch ${batchIdx}/${totalBatches} — encrypting ${chunk.length} amounts`,
+    );
+    const { handles, proof } = await encryptAmountsBatch(
+      CAMPAIGN,
+      admin.address,
+      chunk.map((r) => r.amount),
+    );
+    const tx = await campaign
+      .connect(admin)
+      .setAllocationsBatch(
+        chunk.map((r) => r.address),
+        handles,
+        proof,
+      );
+    await tx.wait();
+    console.log(`      ✓ tx ${tx.hash}`);
+  }
 }
 
 async function main() {
@@ -53,35 +106,23 @@ async function main() {
   console.log(`campaign: ${CAMPAIGN}`);
   console.log("");
 
-  // ─── 1. setAllocation × 2 ──────────────────────────────────────────
+  // ─── 1. setAllocationsBatch ────────────────────────────────────────
+  // CLI mirrors the wizard's batch path (frontend setAllocationsBatched in
+  // deploy.ts) so a single ABI surface covers both flows. At N=2 the helper
+  // produces one batched tx instead of two single-call txs — same on-chain
+  // semantics, half the wallet/gas cost.
   const finalized0 = await campaign.finalized();
   if (finalized0) {
     console.log("Campaign already finalized — skipping setAllocation.");
   } else {
-    const set1 = await campaign.allocationSet(admin.address);
-    if (!set1) {
-      console.log(`[1/4] setAllocation(${shortAddr(admin.address)}, ${RECIPIENT_1_AMOUNT})…`);
-      const enc1 = await encryptAmount(CAMPAIGN, admin.address, RECIPIENT_1_AMOUNT);
-      const tx1 = await campaign.connect(admin).setAllocation(admin.address, enc1.handle, enc1.proof);
-      await tx1.wait();
-      console.log(`      ✓ tx ${tx1.hash}`);
-    } else {
-      console.log(`[1/4] allocation already set for ${shortAddr(admin.address)} — skip`);
-    }
-
-    const set2 = await campaign.allocationSet(RECIPIENT_2_ADDR);
-    if (!set2) {
-      console.log(`[2/4] setAllocation(${shortAddr(RECIPIENT_2_ADDR)}, ${RECIPIENT_2_AMOUNT})…`);
-      const enc2 = await encryptAmount(CAMPAIGN, admin.address, RECIPIENT_2_AMOUNT);
-      const tx2 = await campaign.connect(admin).setAllocation(RECIPIENT_2_ADDR, enc2.handle, enc2.proof);
-      await tx2.wait();
-      console.log(`      ✓ tx ${tx2.hash}`);
-    } else {
-      console.log(`[2/4] allocation already set for ${shortAddr(RECIPIENT_2_ADDR)} — skip`);
-    }
+    console.log(`[1/3] setAllocationsBatch — 2 recipients`);
+    await setAllocationsBatched(campaign, admin, [
+      { address: admin.address, amount: RECIPIENT_1_AMOUNT },
+      { address: RECIPIENT_2_ADDR, amount: RECIPIENT_2_AMOUNT },
+    ]);
 
     // ─── 2. finalize() ────────────────────────────────────────────────
-    console.log(`[3/4] finalize() — submits FHE.eq(runningTotal, declared) handle`);
+    console.log(`[2/3] finalize() — submits FHE.eq(runningTotal, declared) handle`);
     const handleBefore = await campaign.finalizeCheckHandle();
     if (handleBefore === ZERO_HANDLE) {
       const txF = await campaign.connect(admin).finalize();
@@ -94,9 +135,9 @@ async function main() {
     // ─── 3. active-pull KMS + self-submit callbackFinalize ────────────
     const finalizedNow = await campaign.finalized();
     if (finalizedNow) {
-      console.log("[4/4] already finalized — skip active-pull settlement");
+      console.log("[3/3] already finalized — skip active-pull settlement");
     } else {
-      console.log("[4/4] active-pull: hre.fhevm.publicDecrypt(finalizeCheckHandle)…");
+      console.log("[3/3] active-pull: hre.fhevm.publicDecrypt(finalizeCheckHandle)…");
       const checkHandle = await campaign.finalizeCheckHandle();
       const decryptedFinalize = await hre.fhevm.publicDecrypt([checkHandle]);
       const sumCheck = decryptedFinalize.clearValues[checkHandle] as boolean;
