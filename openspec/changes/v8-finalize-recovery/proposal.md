@@ -1,5 +1,13 @@
 # V8 — Finalize timeout recovery (admin escape hatch + late-KMS preservation)
 
+> **🔶 STATUS: DEFERRED to mainnet readiness — see [STATUS.md](./STATUS.md)**
+>
+> V7 active-pull KMS verification (shipped 2026-05-08) covers the dominant
+> failure mode. Remaining tail risk (Gateway unreachable for hours+) is
+> acceptable for v0.x testnet/demo positioning. Current limitation
+> documented in `docs/SECURITY.md` §8.6. Revive this change before
+> mainnet deployment with real funds.
+
 ## Why
 
 > **Update 2026-05-08**: V7 wizard now uses **active-pull KMS verification**
