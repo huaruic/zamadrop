@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
-  useWaitForTransactionReceipt,
+  usePublicClient,
+  useWalletClient,
   useWriteContract,
 } from "wagmi";
 
@@ -14,11 +15,17 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { getFhevmInstance } from "@/fhevm";
+import {
+  CallbackError,
+  pullAndExecuteTransfer,
+} from "@/lib/kms-active-pull";
 import { cn } from "@/lib/utils";
 
 import { shortHandle } from "./shorten";
 
 type StepState = "idle" | "current" | "done";
+type SettlePhase = "idle" | "decrypting" | "submitting" | "done";
 
 interface ClaimStepperProps {
   campaignAddress: `0x${string}`;
@@ -26,7 +33,9 @@ interface ClaimStepperProps {
   claimed: boolean;
   transferred: boolean;
   pendingHandle?: `0x${string}`;
-  /** Called when the claim transaction is mined; parent should refetch chain reads. */
+  /** Called whenever the on-chain claim/transfer state may have changed
+   * (after `claim()` mines, and again after `executeTransfer()` mines).
+   * Parent should refetch chain reads. */
   onClaimMined: () => void;
 }
 
@@ -35,10 +44,11 @@ const ZERO_HANDLE =
 
 /** Three-step stepper that walks the recipient through claim → settlement → done.
  *
- * Per role-page-protocol §4.3 boundary, this component DOES NOT call
- * publicDecrypt or executeTransfer — that is the off-chain executor's
- * responsibility. We only submit `claim()` and then display the pending handle
- * while the parent polls `transferred[me]`. */
+ * V7 active-pull: the recipient signs BOTH `claim()` and `executeTransfer()`
+ * themselves in quick succession. After `claim()` mines, the frontend pulls
+ * the KMS decryption of `pendingClaimHandle[recipient]` via the relayer SDK
+ * and submits `executeTransfer` directly — no off-chain settlement service.
+ * See ADR 0003 and `frontend/src/lib/kms-active-pull.ts`. */
 export function ClaimStepper({
   campaignAddress,
   finalized,
@@ -49,30 +59,88 @@ export function ClaimStepper({
 }: ClaimStepperProps) {
   const { writeContractAsync, isPending: isSubmitting, error: writeError } =
     useWriteContract();
-  const [txHash, setTxHash] = useState<`0x${string}` | undefined>(undefined);
+  const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient();
 
-  const { isLoading: isClaimMining, isSuccess: claimMined } =
-    useWaitForTransactionReceipt({ hash: txHash });
+  const [settlePhase, setSettlePhase] = useState<SettlePhase>("idle");
+  const [settleError, setSettleError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (claimMined) onClaimMined();
-  }, [claimMined, onClaimMined]);
+  /** Active-pull settle: decrypt pendingClaimHandle via Gateway, then submit
+   * executeTransfer. Used by both `handleClaim` (immediately after claim()
+   * mines) AND `handleResumeSettle` (when the user lands on the page with
+   * `claimed === true && transferred === false` — e.g. they refreshed mid-
+   * flow or dismissed the second wallet popup). Pure active-pull, never
+   * re-calls claim(). */
+  const settle = async () => {
+    if (!walletClient) throw new Error("Wallet client unavailable.");
+    const account = walletClient.account;
+    if (!account) throw new Error("No wallet account connected.");
+    if (!publicClient) throw new Error("Public client unavailable.");
+
+    setSettlePhase("decrypting");
+    const fhevm = await getFhevmInstance();
+    setSettlePhase("submitting");
+    await pullAndExecuteTransfer(campaignAddress, account.address, {
+      walletClient,
+      publicClient,
+      fhevm,
+      callerAddress: account.address,
+    });
+    setSettlePhase("done");
+    onClaimMined();
+  };
+
+  /** Surface the right error copy for both handlers. */
+  const handleSettleError = (err: unknown) => {
+    if (err instanceof CallbackError) {
+      if (err.kind === "decrypt_failed") {
+        setSettleError(
+          `${err.message} Click "Resume settlement" once the gateway is healthy.`,
+        );
+      } else {
+        setSettleError(
+          `${err.message} The transfer transaction failed — contact the campaign admin if this persists.`,
+        );
+      }
+    } else {
+      setSettleError(err instanceof Error ? err.message : String(err));
+    }
+    setSettlePhase("idle");
+  };
 
   const handleClaim = async () => {
+    setSettleError(null);
     try {
-      const hash = await writeContractAsync({
+      // Step 1: claim() — recipient signs.
+      const claimHash = await writeContractAsync({
         address: campaignAddress,
         abi: CAMPAIGN_ABI,
         functionName: "claim",
       });
-      setTxHash(hash);
-    } catch {
-      // surfaced via writeError
+      if (!publicClient) throw new Error("Public client unavailable.");
+      await publicClient.waitForTransactionReceipt({ hash: claimHash });
+      onClaimMined();
+
+      // Step 2: active-pull settle — recipient signs the second wallet popup.
+      await settle();
+    } catch (err) {
+      handleSettleError(err);
     }
   };
 
-  // Step state derivation. Step 3 is a terminal state — once `transferred`
-  // flips, it goes straight to `done` (green ✓), not `current` (yellow active).
+  /** Resume Step 2 only — when claim() already mined in a prior visit but
+   * the active-pull never completed (refresh, dismissed wallet popup, etc.).
+   * Calling claim() again would revert AlreadyClaimed. */
+  const handleResumeSettle = async () => {
+    setSettleError(null);
+    try {
+      await settle();
+    } catch (err) {
+      handleSettleError(err);
+    }
+  };
+
+  // Step state derivation.
   const step1: StepState = claimed ? "done" : finalized ? "current" : "idle";
   const step2: StepState = transferred
     ? "done"
@@ -84,12 +152,18 @@ export function ClaimStepper({
   const settledHandle =
     pendingHandle && pendingHandle !== ZERO_HANDLE ? pendingHandle : undefined;
 
+  const settling =
+    settlePhase === "decrypting" || settlePhase === "submitting";
+  const claimButtonDisabled = isSubmitting || settling;
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Claim & withdraw</CardTitle>
         <CardDescription>
-          Three steps. You only sign step 1 — the rest happens automatically.
+          Two wallet signatures, in quick succession. The first locks in your
+          claim; the second pulls the KMS-signed amount and pushes the ERC-20
+          transfer.
         </CardDescription>
       </CardHeader>
 
@@ -103,19 +177,19 @@ export function ClaimStepper({
               ? "Waiting for admin to finalize the campaign."
               : claimed
                 ? "Claim recorded on-chain."
-                : "Submit a transaction to lock in your claim. The amount stays encrypted until the executor settles it."
+                : "Submit a transaction to lock in your claim. The amount stays encrypted on chain until you sign the settlement tx."
           }
         >
           {step1 === "current" && (
             <div className="space-y-3">
               <Button
                 onClick={handleClaim}
-                disabled={isSubmitting || isClaimMining}
+                disabled={claimButtonDisabled}
               >
                 {isSubmitting
                   ? "Awaiting wallet…"
-                  : isClaimMining
-                    ? "Confirming…"
+                  : settling
+                    ? "Settling…"
                     : "Claim allocation"}
               </Button>
               {writeError && (
@@ -133,12 +207,12 @@ export function ClaimStepper({
         <Step
           index={2}
           state={step2}
-          title={step2 === "done" ? "Settlement complete" : "Awaiting settlement"}
+          title={step2 === "done" ? "Settlement complete" : "Settling"}
           description={
             step2 === "done"
-              ? "Executor decrypted via KMS and pushed the ERC-20 transfer."
+              ? "KMS decrypted your amount and your `executeTransfer` tx is mined."
               : step2 === "current"
-                ? "The off-chain executor reads this handle, decrypts it via KMS, and submits the ERC-20 transfer. Typically settles in ~30 seconds."
+                ? "Decrypting your amount via KMS and submitting the ERC-20 transfer. You'll see a second wallet popup."
                 : "Will start after step 1."
           }
         >
@@ -152,13 +226,43 @@ export function ClaimStepper({
                   {settledHandle ? shortHandle(settledHandle) : "Loading…"}
                 </div>
               </div>
-              <Alert variant="warning">
-                <AlertTitle>Hands-off</AlertTitle>
-                <AlertDescription>
-                  No further action from you. We poll every 5 seconds for the
-                  settlement event.
-                </AlertDescription>
-              </Alert>
+              {/* Resume button: fires only when the active-pull never
+                  started or got interrupted. Lets a recipient who dismissed
+                  the second wallet popup (or refreshed mid-flow) finish
+                  Step 2 without re-calling claim() — that would revert
+                  AlreadyClaimed. Hidden while settle() is in flight. */}
+              {settlePhase === "idle" && !settleError && (
+                <Button onClick={handleResumeSettle}>
+                  Resume settlement
+                </Button>
+              )}
+              {settlePhase === "decrypting" && (
+                <Alert variant="info">
+                  <AlertTitle>Decrypting amount via KMS…</AlertTitle>
+                  <AlertDescription>
+                    Asking the Gateway to run threshold MPC. ~3–10 seconds.
+                  </AlertDescription>
+                </Alert>
+              )}
+              {settlePhase === "submitting" && (
+                <Alert variant="info">
+                  <AlertTitle>Submitting transfer…</AlertTitle>
+                  <AlertDescription>
+                    Sign the second wallet popup to push the ERC-20 transfer.
+                  </AlertDescription>
+                </Alert>
+              )}
+              {settleError && (
+                <div className="space-y-2">
+                  <Alert variant="destructive">
+                    <AlertTitle>Settlement failed</AlertTitle>
+                    <AlertDescription>{settleError}</AlertDescription>
+                  </Alert>
+                  <Button onClick={handleResumeSettle} variant="outline">
+                    Retry settlement
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </Step>

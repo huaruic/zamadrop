@@ -1,3 +1,5 @@
+> 📌 **Translation status (as of 2026-05-07):** The Chinese PRD at `docs/product/prd.zh-CN.md` is the **canonical source** and is currently AHEAD of this English version (e.g., the Chinese version contains a §6.1 "已落地的 production 加固" section not yet translated here). When in doubt, prefer the Chinese version. Sync efforts welcome.
+
 # ZamaDrop — Product Requirements Document
 
 🌐 [中文](./prd.md) | English

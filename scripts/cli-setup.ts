@@ -1,12 +1,11 @@
 /**
  * CLI E2E driver for ZamaDrop. Drives the full admin + recipient + auditor
- * lifecycle from the command line, while the real `scripts/executor.ts`
- * runs concurrently to handle the off-chain settlement bridge.
+ * lifecycle from the command line. This script actively pulls KMS via
+ * `hre.fhevm.publicDecrypt` and self-submits the callbacks (no off-chain
+ * settlement service required).
  *
  * This is what you'd see in the browser if you clicked through Admin tab
  * → Recipient tab → Auditor tab — minus the EIP-712 wallet popups.
- *
- * Pre-req: `bun run executor` running in another terminal (or background).
  *
  * Run: npx hardhat run scripts/cli-setup.ts --network sepolia
  */
@@ -24,9 +23,6 @@ const RECIPIENT_2_ADDR = "0x000000000000000000000000000000000000dEaD";
 const ZERO_HANDLE =
   "0x0000000000000000000000000000000000000000000000000000000000000000";
 
-const POLL_MS = 5000;
-const MAX_WAIT_MS = 180_000; // 3min — generous for Sepolia + KMS
-
 function shortAddr(a: string) {
   return `${a.slice(0, 8)}…${a.slice(-6)}`;
 }
@@ -40,23 +36,6 @@ async function encryptAmount(
   input.add64(value);
   const enc = await input.encrypt();
   return { handle: enc.handles[0], proof: enc.inputProof };
-}
-
-async function waitFor<T>(
-  label: string,
-  read: () => Promise<T>,
-  predicate: (v: T) => boolean,
-): Promise<T> {
-  const start = Date.now();
-  while (true) {
-    const v = await read();
-    if (predicate(v)) return v;
-    if (Date.now() - start > MAX_WAIT_MS) {
-      throw new Error(`Timed out waiting for: ${label}`);
-    }
-    process.stdout.write(`  …waiting for ${label} (${Math.round((Date.now() - start) / 1000)}s)\r`);
-    await new Promise((r) => setTimeout(r, POLL_MS));
-  }
 }
 
 async function main() {
@@ -112,10 +91,28 @@ async function main() {
       console.log(`      handle already emitted — skip submit`);
     }
 
-    // ─── 3. wait for executor to callbackFinalize ─────────────────────
-    console.log("[4/4] waiting for executor to settle finalize via KMS publicDecrypt…");
-    await waitFor("finalized=true", () => campaign.finalized(), (v) => v === true);
-    console.log("\n      ✓ executor settled — campaign now in Claiming phase");
+    // ─── 3. active-pull KMS + self-submit callbackFinalize ────────────
+    const finalizedNow = await campaign.finalized();
+    if (finalizedNow) {
+      console.log("[4/4] already finalized — skip active-pull settlement");
+    } else {
+      console.log("[4/4] active-pull: hre.fhevm.publicDecrypt(finalizeCheckHandle)…");
+      const checkHandle = await campaign.finalizeCheckHandle();
+      const decryptedFinalize = await hre.fhevm.publicDecrypt([checkHandle]);
+      const sumCheck = decryptedFinalize.clearValues[checkHandle] as boolean;
+      console.log(`      sumCheck = ${sumCheck} (${sumCheck ? "matches → Claiming" : "mismatch → Failed"})`);
+      const txCb = await campaign.connect(admin).callbackFinalize(sumCheck, decryptedFinalize.decryptionProof);
+      await txCb.wait();
+      console.log(`      ✓ callbackFinalize tx ${txCb.hash}`);
+      const stateAfter = Number(await campaign.state());
+      if (stateAfter === 2) {
+        console.log("      ✓ settled — campaign now in Claiming phase");
+      } else if (stateAfter === 3) {
+        console.log("      ⚠ KMS reported sum mismatch — campaign moved to Failed");
+      } else {
+        console.log(`      ⚠ unexpected state ${stateAfter} after callbackFinalize`);
+      }
+    }
   }
   console.log("");
 
@@ -145,14 +142,22 @@ async function main() {
     console.log(`        ✓ tx ${txC.hash}`);
   }
 
-  // ─── 6. wait for executor to executeTransfer ───────────────────────
-  console.log("[claim] waiting for executor to publicDecrypt + executeTransfer…");
-  await waitFor(
-    "transferred=true",
-    () => campaign.transferred(admin.address),
-    (v) => v === true,
-  );
-  console.log("\n        ✓ executor settled transfer");
+  // ─── 6. active-pull KMS + self-submit executeTransfer ──────────────
+  const alreadyTransferred = await campaign.transferred(admin.address);
+  if (alreadyTransferred) {
+    console.log("[claim] already transferred — skip active-pull settlement");
+  } else {
+    console.log("[claim] active-pull: hre.fhevm.publicDecrypt(pendingClaimHandle)…");
+    const claimHandle = await campaign.pendingClaimHandle(admin.address);
+    const decryptedClaim = await hre.fhevm.publicDecrypt([claimHandle]);
+    const amount = decryptedClaim.clearValues[claimHandle] as bigint;
+    console.log(`        decrypted amount = ${amount} ZDT`);
+    const txT = await campaign
+      .connect(admin)
+      .executeTransfer(admin.address, amount, decryptedClaim.decryptionProof);
+    await txT.wait();
+    console.log(`        ✓ executeTransfer tx ${txT.hash} — settled`);
+  }
 
   const balance = await token.balanceOf(admin.address);
   console.log(`[claim] ERC20 balance: ${balance} ZDT  ← real tokens in your wallet`);
@@ -181,11 +186,11 @@ async function main() {
   console.log("  Lifecycle traversed:");
   console.log("    Setup → Finalize-pending → Claiming → Done");
   console.log("");
-  console.log("  Off-chain executor handled:");
+  console.log("  Active-pull settlement handled:");
   console.log("    finalizeCheckHandle → publicDecrypt → callbackFinalize");
   console.log("    pendingClaimHandle  → publicDecrypt → executeTransfer");
   console.log("");
-  console.log("  Trust root: Zama threshold KMS signatures, NOT executor identity.");
+  console.log("  Trust root: Zama threshold KMS signatures (FHE.checkSignatures).");
   console.log("════════════════════════════════════════════════════════════");
 }
 

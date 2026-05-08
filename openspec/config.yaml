@@ -1,20 +1,35 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Project: ZamaDrop, a confidential token distribution protocol built on Zama fhEVM.
+  Stack: Solidity + @fhevm/solidity ^0.11.1, Hardhat + TypeScript tests, Vite frontend.
+  FHE API: use FHE.xxx from @fhevm/solidity/lib/FHE.sol. Do not use legacy TFHE.xxx.
+  Core contract: contracts/ZamaDropCampaign.sol.
+  Critical invariants:
+    - allocations are set once per recipient;
+    - claim() is atomic and must preserve rollback behavior;
+    - encrypted claimedTotal is only updated in claim();
+    - callbackFinalize and executeTransfer must verify KMS threshold signatures with FHE.checkSignatures;
+    - testnet Gateway callbacks are asynchronous and may take 1-3 blocks.
+  MVP non-goals unless explicitly changed: Merkle proofs, vesting, factory, ERC7984, cross-chain, KYC.
+  Memory model:
+    - AGENTS.md contains project rules;
+    - openspec/changes contains active change context;
+    - openspec/specs contains accepted long-lived capability specs after archive;
+    - docs/ADR contains long-lived technical decisions;
+    - docs/LEARNINGS.md contains debugging lessons;
+    - docs/WORKLOG.md contains handoff state.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+rules:
+  proposal:
+    - State the user/product problem, affected roles, scope, non-goals, and impacted code areas.
+    - Call out privacy-boundary changes explicitly.
+    - Do not expand MVP scope silently; list scope additions as explicit decisions.
+  design:
+    - Record alternatives considered and why the chosen path wins.
+    - Include trust assumptions for FHE, KMS callbacks, backend, and frontend flows when relevant.
+    - Preserve ZamaDrop contract invariants unless the proposal explicitly changes them.
+  tasks:
+    - Keep tasks verifiable.
+    - Include required tests or manual verification for each risky behavior change.
+    - Contract, FHE/KMS, and privacy-boundary changes must include negative tests or adversarial checks.

@@ -17,6 +17,9 @@ import {
   useUserDecryptEuint64,
 } from "@/hooks/useUserDecryptEuint64";
 import { formatTokenAmount } from "@/hooks/useTokenMeta";
+// V7 sanity check: the encrypted aggregate `_claimedTotal` should equal the
+// public `claimedTotalPlaintext` accumulator (modulo timing). After decrypt
+// we display both for the auditor to compare visually.
 
 interface AggregateCardProps {
   campaignAddress: `0x${string}`;
@@ -50,6 +53,15 @@ export function AggregateCard({
     account: walletAddress,
     query: { enabled: !!walletAddress },
   });
+
+  const { data: claimedTotalPlaintextRaw } = useReadContract({
+    address: campaignAddress,
+    abi: CAMPAIGN_ABI,
+    functionName: "claimedTotalPlaintext",
+  });
+  const claimedTotalPlaintext = claimedTotalPlaintextRaw as
+    | bigint
+    | undefined;
 
   const { decrypt, data, error, isPending, stage } = useUserDecryptEuint64();
 
@@ -99,6 +111,32 @@ export function AggregateCard({
             {percent !== null && (
               <div className="font-mono text-xs text-muted-foreground">
                 {percent}% of declared total claimed
+              </div>
+            )}
+            {claimedTotalPlaintext !== undefined && (
+              <div className="pt-2 font-mono text-[11px] leading-relaxed">
+                {data === claimedTotalPlaintext ? (
+                  <span className="text-emerald-300">
+                    ✓ Matches public claimedTotalPlaintext (
+                    {formatTokenAmount(
+                      claimedTotalPlaintext,
+                      decimals,
+                      symbol,
+                    )}
+                    )
+                  </span>
+                ) : (
+                  <span className="text-destructive">
+                    ⚠ Decrypted aggregate ({formatTokenAmount(data, decimals, symbol)}) ≠
+                    public accumulator (
+                    {formatTokenAmount(
+                      claimedTotalPlaintext,
+                      decimals,
+                      symbol,
+                    )}
+                    ) — possible indexer drift, investigate
+                  </span>
+                )}
               </div>
             )}
             <p className="pt-1 font-mono text-[11px] leading-relaxed text-muted-foreground">

@@ -6,6 +6,13 @@
  * - recipient2 = 一个随机地址（用于撑起 declaredTotal=1000 的总和约束，但永不 claim）
  *
  * 这足以演示 FHE 隐私 + 总量验证 + claim 流程的全部要点。
+ *
+ * V7 注意事项：
+ * - callbackFinalize 与 executeTransfer 必须传 KMS decryptionProof
+ *   （`hre.fhevm.publicDecrypt` 一次返回 clearValues + proof）
+ * - state 是 enum (Setup/Finalizing/Claiming/Failed)；finalized() 是从
+ *   state == Claiming 派生的兼容视图
+ * - KMS 报告 sum mismatch 时 state 进入 Failed，恢复路径是 cancelCampaign()
  */
 import path from "path";
 import hre, { ethers } from "hardhat";
@@ -19,6 +26,18 @@ const FAKE_RECIPIENT = "0x000000000000000000000000000000000000dEaD";
 
 const ALLOC_DEPLOYER = 600n;
 const ALLOC_FAKE = 400n;
+
+// V7: enum State { Setup, Finalizing, Claiming, Failed }
+const STATE_LABELS = ["Setup", "Finalizing", "Claiming", "Failed"] as const;
+const STATE_SETUP = 0;
+const STATE_FINALIZING = 1;
+const STATE_CLAIMING = 2;
+const STATE_FAILED = 3;
+
+function stateLabel(s: bigint | number): string {
+  const idx = Number(s);
+  return STATE_LABELS[idx] ?? `Unknown(${idx})`;
+}
 
 async function bootstrapFhevm() {
   if (hre.network.name === "hardhat") {
@@ -43,7 +62,7 @@ async function main() {
   await bootstrapFhevm();
 
   const [deployer] = await ethers.getSigners();
-  console.log("=== ZamaDrop E2E (Sepolia) ===");
+  console.log("=== ZamaDrop E2E (Sepolia, V7) ===");
   console.log("Deployer / Recipient1:", deployer.address);
   console.log("Fake Recipient2:      ", FAKE_RECIPIENT);
   console.log("Token:                ", TOKEN);
@@ -56,9 +75,14 @@ async function main() {
   // ─────────────────────────────────────────────
   // Step 1: 设置 deployer 自己的 allocation = 600
   // ─────────────────────────────────────────────
-  const finalized0 = await campaign.finalized();
+  const stateBefore = await campaign.state();
   const set0 = await campaign.allocationSet(deployer.address);
-  console.log("[State] finalized=", finalized0, "allocationSet[deployer]=", set0);
+  console.log(
+    "[State] state=",
+    `${stateBefore} (${stateLabel(stateBefore)})`,
+    "allocationSet[deployer]=",
+    set0,
+  );
 
   if (!set0) {
     console.log("\n[1/6] setAllocation(deployer, 600)...");
@@ -93,7 +117,8 @@ async function main() {
   // ─────────────────────────────────────────────
   // Step 3: finalize（FHE.eq 验证总量）
   // ─────────────────────────────────────────────
-  if (!(await campaign.finalized())) {
+  let stateNow = Number(await campaign.state());
+  if (stateNow === STATE_SETUP) {
     let checkHandle = await campaign.finalizeCheckHandle();
     if (checkHandle === ethers.ZeroHash) {
       console.log("\n[3/6] finalize()...");
@@ -102,22 +127,53 @@ async function main() {
       await tx3.wait();
       checkHandle = await campaign.finalizeCheckHandle();
       console.log("    ✓ confirmed, finalizeCheckHandle:", checkHandle);
+      stateNow = Number(await campaign.state());
+      console.log("    state after finalize:", `${stateNow} (${stateLabel(stateNow)})`);
     } else {
       console.log("\n[3/6] finalize: SKIP (handle already exists)");
     }
+  }
 
-    // 公开解密 ebool
-    console.log("\n[4/6] publicDecryptEbool(checkHandle)... (KMS, 可能 30~60s)");
-    const sumOk = await hre.fhevm.publicDecryptEbool(checkHandle);
+  if (stateNow === STATE_FINALIZING) {
+    const checkHandle = await campaign.finalizeCheckHandle();
+    // V7: publicDecrypt 一次返回 clearValues + decryptionProof（KMS threshold 签名）
+    console.log("\n[4/6] publicDecrypt(checkHandle)... (KMS, 可能 30~60s)");
+    const decryption = await hre.fhevm.publicDecrypt([checkHandle]);
+    const sumOk = decryption.clearValues[checkHandle] as boolean;
+    const proof = decryption.decryptionProof;
     console.log("    decrypted:", sumOk);
 
-    console.log("\n     callbackFinalize(", sumOk, ")...");
-    const tx4 = await campaign.callbackFinalize(sumOk);
+    console.log("\n     callbackFinalize(", sumOk, ", proof)...");
+    const tx4 = await campaign.callbackFinalize(sumOk, proof);
     console.log("    tx:", tx4.hash);
     await tx4.wait();
-    console.log("    ✓ finalized=", await campaign.finalized());
-  } else {
-    console.log("[3-4/6] finalize: SKIP (already finalized)");
+    stateNow = Number(await campaign.state());
+    console.log(
+      "    ✓ state=",
+      `${stateNow} (${stateLabel(stateNow)})`,
+      " finalized()=",
+      await campaign.finalized(),
+    );
+  } else if (stateNow === STATE_CLAIMING) {
+    console.log("[3-4/6] finalize: SKIP (already in Claiming)");
+  }
+
+  // V7: KMS 报告总量不匹配 → state == Failed。恢复路径是 cancelCampaign。
+  if (stateNow === STATE_FAILED) {
+    console.log(
+      "\n[!] state=Failed — KMS reported sum mismatch. Recovering via cancelCampaign().",
+    );
+    const balBefore = await token.balanceOf(CAMPAIGN);
+    console.log("    campaign balance before cancel:", balBefore.toString());
+    const txCancel = await campaign.cancelCampaign();
+    console.log("    tx:", txCancel.hash);
+    await txCancel.wait();
+    const balAfter = await token.balanceOf(CAMPAIGN);
+    console.log("    ✓ cancelCampaign confirmed. campaign balance:", balAfter.toString());
+    console.log(
+      "\n=== Aborted (Failed branch) — redeploy with corrected inputs to retry ===",
+    );
+    return;
   }
 
   // ─────────────────────────────────────────────
@@ -128,7 +184,10 @@ async function main() {
     const tx5 = await campaign.claim();
     console.log("    tx:", tx5.hash);
     await tx5.wait();
-    console.log("    ✓ claimed=true, pendingClaimHandle=", await campaign.pendingClaimHandle(deployer.address));
+    console.log(
+      "    ✓ claimed=true, pendingClaimHandle=",
+      await campaign.pendingClaimHandle(deployer.address),
+    );
   } else {
     console.log("[5/6] claim: SKIP (already claimed)");
   }
@@ -138,9 +197,10 @@ async function main() {
   // ─────────────────────────────────────────────
   if (!(await campaign.transferred(deployer.address))) {
     const pendingHandle = await campaign.pendingClaimHandle(deployer.address);
-    console.log("\n[6/6] publicDecryptEuint(pendingHandle)... (KMS, 可能 30~60s)");
-    const { FhevmType } = await import("@fhevm/mock-utils");
-    const decrypted = await hre.fhevm.publicDecryptEuint(FhevmType.euint64, pendingHandle);
+    console.log("\n[6/6] publicDecrypt(pendingHandle)... (KMS, 可能 30~60s)");
+    const decryption = await hre.fhevm.publicDecrypt([pendingHandle]);
+    const decrypted = decryption.clearValues[pendingHandle] as bigint;
+    const proof = decryption.decryptionProof;
     console.log("    decrypted amount:", decrypted.toString());
 
     if (decrypted !== ALLOC_DEPLOYER) {
@@ -148,12 +208,16 @@ async function main() {
     }
 
     const balBefore = await token.balanceOf(deployer.address);
-    console.log("\n     executeTransfer(deployer,", decrypted.toString(), ")...");
-    const tx6 = await campaign.executeTransfer(deployer.address, decrypted);
+    console.log("\n     executeTransfer(deployer,", decrypted.toString(), ", proof)...");
+    const tx6 = await campaign.executeTransfer(deployer.address, decrypted, proof);
     console.log("    tx:", tx6.hash);
     await tx6.wait();
     const balAfter = await token.balanceOf(deployer.address);
     console.log("    ✓ ZDT balance:", balBefore.toString(), "→", balAfter.toString());
+    console.log(
+      "    ✓ claimedTotalPlaintext:",
+      (await campaign.claimedTotalPlaintext()).toString(),
+    );
   } else {
     console.log("[6/6] executeTransfer: SKIP (already transferred)");
   }

@@ -6,6 +6,14 @@ const CAMPAIGN = deployment.contracts.ZamaDropCampaign.address;
 const DEPLOYER = "0x0000000000000000000000000000000000000000";
 const FAKE = "0x000000000000000000000000000000000000dEaD";
 
+// V7: enum State { Setup, Finalizing, Claiming, Failed }
+const STATE_LABELS = ["Setup", "Finalizing", "Claiming", "Failed"] as const;
+
+function stateLabel(s: bigint | number): string {
+  const idx = Number(s);
+  return STATE_LABELS[idx] ?? `Unknown(${idx})`;
+}
+
 async function main() {
   const token = await ethers.getContractAt("MockToken", TOKEN);
   const campaign = await ethers.getContractAt("ZamaDropCampaign", CAMPAIGN);
@@ -16,15 +24,26 @@ async function main() {
   const balDeployer = await token.balanceOf(DEPLOYER);
   const balCampaign = await token.balanceOf(CAMPAIGN);
   console.log("  Deployer 钱包:    ", balDeployer.toString(), "ZDT  ← 这是从 Campaign claim 来的");
-  console.log("  Campaign escrow:  ", balCampaign.toString(), "ZDT  ← 1000 - 600 = 400 还在 escrow");
+  console.log("  Campaign escrow:  ", balCampaign.toString(), "ZDT  ← declaredTotal − claimedTotalPlaintext 还在 escrow");
 
-  console.log("\n[2] ZamaDropCampaign 合约状态：");
-  console.log("  finalized:               ", await campaign.finalized());
+  console.log("\n[2] ZamaDropCampaign 合约状态 (V7)：");
+  const state = await campaign.state();
+  const declaredTotal = await campaign.declaredTotal();
+  const recipientCount = await campaign.recipientCount();
+  const allocationCount = await campaign.allocationCount();
+  const claimedTotalPlaintext = await campaign.claimedTotalPlaintext();
+  const recipientListHash = await campaign.recipientListHash();
+  console.log("  state:                   ", `${state} (${stateLabel(state)})`);
+  console.log("  declaredTotal:           ", declaredTotal.toString());
+  console.log("  recipientCount:          ", recipientCount.toString());
+  console.log("  allocationCount:         ", allocationCount.toString());
+  console.log("  claimedTotalPlaintext:   ", claimedTotalPlaintext.toString());
+  console.log("  recipientListHash:       ", recipientListHash);
+  console.log("  finalized() (legacy):    ", await campaign.finalized());
   console.log("  claimed[deployer]:       ", await campaign.claimed(DEPLOYER));
   console.log("  transferred[deployer]:   ", await campaign.transferred(DEPLOYER));
   console.log("  allocationSet[deployer]: ", await campaign.allocationSet(DEPLOYER));
   console.log("  allocationSet[fake]:     ", await campaign.allocationSet(FAKE));
-  console.log("  declaredTotal:           ", (await campaign.declaredTotal()).toString());
 
   console.log("\n[3] 事件历史（最近 5000 区块）：");
   const latest = await ethers.provider.getBlockNumber();

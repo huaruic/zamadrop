@@ -1,6 +1,7 @@
 import { useCallback } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, useReadContract, useReadContracts } from "wagmi";
 
+import { CAMPAIGN_ABI, ERC20_ABI } from "@/abis";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -16,9 +17,11 @@ import { useCampaignReads } from "@/hooks/useCampaignReads";
 import { formatTokenAmount, useTokenMeta } from "@/hooks/useTokenMeta";
 
 import { AllocationLedger } from "./AllocationLedger";
+import { CancelCampaignForm } from "./CancelCampaignForm";
 import { FinalizePanel } from "./FinalizePanel";
 import { SetAllocationForm } from "./SetAllocationForm";
 import { isZeroHash } from "./shortAddr";
+import { WithdrawExcessForm } from "./WithdrawExcessForm";
 
 type Phase = "Setup" | "Finalize-pending" | "Claiming" | "Loading";
 
@@ -26,7 +29,7 @@ type Phase = "Setup" | "Finalize-pending" | "Claiming" | "Loading";
  *  Boundaries (per docs/role-page-protocol.md §4.2 + docs/security-notes.md §3):
  *   - Reads: declaredTotal, recipientCount, finalized, finalizeCheckHandle, AllocationSet events
  *   - Writes: setAllocation, finalize
- *   - Does NOT call publicDecrypt or callbackFinalize — that is the executor's job. */
+ *   - Calls publicDecrypt + callbackFinalize via the active-pull util in FinalizePanel. */
 export default function AdminPage() {
   const { campaignAddress } = useCampaignParam();
   const { address: walletAddress, isConnected } = useAccount();
@@ -34,6 +37,37 @@ export default function AdminPage() {
   const reads = useCampaignReads(campaignAddress);
   const { symbol, decimals } = useTokenMeta(reads.tokenAddress);
   const events = useAllocationEvents(campaignAddress);
+
+  // V7-only reads: state enum, claimedTotalPlaintext, recipientListHash.
+  const { data: v7Reads, refetch: refetchV7 } = useReadContracts({
+    contracts: [
+      { address: campaignAddress, abi: CAMPAIGN_ABI, functionName: "state" },
+      {
+        address: campaignAddress,
+        abi: CAMPAIGN_ABI,
+        functionName: "claimedTotalPlaintext",
+      },
+      {
+        address: campaignAddress,
+        abi: CAMPAIGN_ABI,
+        functionName: "recipientListHash",
+      },
+    ],
+  });
+  const stateNum = v7Reads?.[0]?.result as number | undefined;
+  const claimedTotalPlaintext = v7Reads?.[1]?.result as bigint | undefined;
+  const recipientListHash = v7Reads?.[2]?.result as `0x${string}` | undefined;
+
+  const { data: contractBalanceRaw, refetch: refetchBalance } = useReadContract(
+    {
+      address: reads.tokenAddress,
+      abi: ERC20_ABI,
+      functionName: "balanceOf",
+      args: [campaignAddress],
+      query: { enabled: !!reads.tokenAddress },
+    },
+  );
+  const contractBalance = contractBalanceRaw as bigint | undefined;
 
   const isAdmin =
     !!walletAddress &&
@@ -51,7 +85,9 @@ export default function AdminPage() {
   const refetchAll = useCallback(() => {
     reads.refetch();
     events.refetch();
-  }, [reads, events]);
+    void refetchV7();
+    void refetchBalance();
+  }, [reads, events, refetchV7, refetchBalance]);
 
   // V6 + post-Codex refinement: hide operational data sections in preview
   // mode. Disconnected or non-admin wallets see only the guard alert. Public
@@ -64,7 +100,7 @@ export default function AdminPage() {
         adminLoaded={!!reads.admin}
       />
 
-      {isAdmin && (
+      {isAdmin && stateNum === 3 && (
         <>
           <StatusCard
             phase={phase}
@@ -73,6 +109,44 @@ export default function AdminPage() {
             symbol={symbol}
             recipientCount={declaredCount}
             allocationsSetCount={allocationsSetCount}
+          />
+
+          <V7BadgeStrip
+            claimedTotalPlaintext={claimedTotalPlaintext}
+            contractBalance={contractBalance}
+            recipientListHash={recipientListHash}
+            decimals={decimals}
+            symbol={symbol}
+          />
+
+          <CancelCampaignForm
+            campaignAddress={campaignAddress}
+            tokenAddress={reads.tokenAddress}
+            decimals={decimals}
+            symbol={symbol}
+            enabled={stateNum === 3}
+            onSuccess={refetchAll}
+          />
+        </>
+      )}
+
+      {isAdmin && stateNum !== 3 && (
+        <>
+          <StatusCard
+            phase={phase}
+            declaredTotal={reads.declaredTotal}
+            decimals={decimals}
+            symbol={symbol}
+            recipientCount={declaredCount}
+            allocationsSetCount={allocationsSetCount}
+          />
+
+          <V7BadgeStrip
+            claimedTotalPlaintext={claimedTotalPlaintext}
+            contractBalance={contractBalance}
+            recipientListHash={recipientListHash}
+            decimals={decimals}
+            symbol={symbol}
           />
 
           <SetAllocationForm
@@ -108,8 +182,100 @@ export default function AdminPage() {
               </AlertDescription>
             </Alert>
           )}
+
+          <WithdrawExcessForm
+            campaignAddress={campaignAddress}
+            tokenAddress={reads.tokenAddress}
+            declaredTotal={reads.declaredTotal}
+            claimedTotalPlaintext={claimedTotalPlaintext}
+            decimals={decimals}
+            symbol={symbol}
+            // V7 contract gate: state == Claiming (enum 2). Other states
+            // would revert NotClaiming, so disable the form preemptively.
+            enabled={stateNum === 2}
+            onSuccess={refetchAll}
+          />
         </>
       )}
+    </div>
+  );
+}
+
+/** V7 badge strip: surface the three new public reads (claimedTotalPlaintext,
+ * balanceOf, recipientListHash) so admins have at-a-glance solvency + list
+ * integrity signal without leaving this page. */
+function V7BadgeStrip({
+  claimedTotalPlaintext,
+  contractBalance,
+  recipientListHash,
+  decimals,
+  symbol,
+}: {
+  claimedTotalPlaintext: bigint | undefined;
+  contractBalance: bigint | undefined;
+  recipientListHash: `0x${string}` | undefined;
+  decimals: number;
+  symbol?: string;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>V7 invariants</CardTitle>
+        <CardDescription>
+          Public solvency + list-integrity reads. Auditor-grade visibility for
+          admins.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <BadgeCell
+            label="Claimed total (plaintext)"
+            value={formatTokenAmount(claimedTotalPlaintext, decimals, symbol)}
+          />
+          <BadgeCell
+            label="Campaign balance"
+            value={formatTokenAmount(contractBalance, decimals, symbol)}
+          />
+          <BadgeCell
+            label="Recipient list hash"
+            value={
+              recipientListHash
+                ? `${recipientListHash.slice(0, 10)}…${recipientListHash.slice(-6)}`
+                : "—"
+            }
+            title={recipientListHash}
+            mono
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function BadgeCell({
+  label,
+  value,
+  title,
+  mono,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+  mono?: boolean;
+}) {
+  return (
+    <div
+      className="rounded-md border border-border bg-surface p-4"
+      title={title}
+    >
+      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </div>
+      <div
+        className={`mt-1 font-semibold tracking-tight ${mono ? "font-mono text-xs break-all" : "font-mono text-base"}`}
+      >
+        {value}
+      </div>
     </div>
   );
 }

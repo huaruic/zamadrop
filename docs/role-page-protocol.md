@@ -1,3 +1,14 @@
+> ⚠️ **Superseded by V7.** This V6 4-tab role/page protocol is **historical reference only**.
+> Current authoritative behavior is defined by the V7 OpenSpec change at
+> `openspec/changes/v7-dapp-wizard/specs/*/spec.md` until V7 is archived into `openspec/specs/`.
+> Do not use this document to make implementation decisions for V7.
+>
+> **Note on "executor" sections below**: V7 eliminated the off-chain
+> `scripts/executor.ts` daemon — the frontend wallet that triggers each flow
+> now self-submits the KMS callback via [`frontend/src/lib/kms-active-pull.ts`](../frontend/src/lib/kms-active-pull.ts).
+> See [ADR 0003](./ADR/0003-frontend-as-primary-executor.md). Any "executor"
+> reference below describes the V6 model, not V7+ behaviour.
+
 # Role / Page Protocol
 
 更新日期：2026-05-06

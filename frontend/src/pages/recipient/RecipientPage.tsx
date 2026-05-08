@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useAccount, useReadContract } from "wagmi";
 
-import { CAMPAIGN_ABI } from "@/abis";
+import { CAMPAIGN_ABI, ERC20_ABI } from "@/abis";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useCampaignParam } from "@/hooks/useCampaignParam";
 import { useCampaignReads } from "@/hooks/useCampaignReads";
@@ -11,24 +11,52 @@ import { AllocationCard } from "./AllocationCard";
 import { BalancePanel } from "./BalancePanel";
 import { ClaimStepper } from "./ClaimStepper";
 
-/** Recipient role page · spec: docs/role-page-protocol.md §4.3
+// V7 state enum (must match contract):
+//   0 = Setup, 1 = Finalizing, 2 = Claiming, 3 = Failed
+const STATE_FAILED = 3;
+
+/** Recipient role page.
  *
- * Five UI states keyed off chain reads:
+ * UI states keyed off chain reads:
  *   A. Disconnected               → connect prompt
  *   B. Connected, no allocation   → "ask admin" notice
  *   C. Allocation set, !finalized → encrypted card + disabled stepper
  *   D. Finalized, !claimed        → encrypted card + active claim button
- *   E. Claimed, !transferred      → awaiting-settlement state, polls every 5s
  *   F. Transferred                → success state + balance
  *
- * Strict boundary: this page never calls publicDecrypt or executeTransfer —
- * those belong to the off-chain executor. See docs/security-notes.md §3. */
+ * The recipient signs both `claim()` and `executeTransfer()` themselves; the
+ * stepper drives an active-pull KMS decrypt + submit between them. See ADR
+ * 0001 (KMS-gated callback) and the shared util in
+ * `frontend/src/lib/kms-active-pull.ts`. */
 export default function RecipientPage() {
   const { campaignAddress } = useCampaignParam();
   const { address, isConnected } = useAccount();
 
   const { finalized, tokenAddress } = useCampaignReads(campaignAddress);
   const { symbol, decimals } = useTokenMeta(tokenAddress);
+
+  // V7: read the explicit state enum so we can render a Failed message
+  // instead of the misleading "not finalized yet" copy when the KMS sum
+  // check failed and the campaign is terminally cancelled.
+  const { data: stateNumData } = useReadContract({
+    address: campaignAddress,
+    abi: CAMPAIGN_ABI,
+    functionName: "state",
+  });
+  const stateNum = stateNumData as number | undefined;
+
+  // V7 · in Failed state we want to distinguish "admin already cancelled
+  // (balance == 0)" from "admin has not yet called cancelCampaign". Reading
+  // the campaign's token balance gives the recipient an honest signal
+  // instead of pre-asserting funds were returned.
+  const { data: campaignBalanceData } = useReadContract({
+    address: tokenAddress,
+    abi: ERC20_ABI,
+    functionName: "balanceOf",
+    args: campaignAddress ? [campaignAddress] : undefined,
+    query: { enabled: stateNum === STATE_FAILED && !!tokenAddress },
+  });
+  const campaignBalance = campaignBalanceData as bigint | undefined;
 
   // Per-recipient flags. All gated on a connected account.
   const {
@@ -52,21 +80,14 @@ export default function RecipientPage() {
 
   const claimed = claimedData === true;
 
-  // Poll `transferred[me]` every 5s while we're in state E (claimed but not yet
-  // transferred). The callback form of refetchInterval reads the latest cached
-  // value so we can stop polling automatically when the flag flips.
+  // `transferred[me]` is a one-shot read. The stepper signals when it has
+  // finished `executeTransfer` via `onClaimMined`, at which point we refetch.
   const { data: transferredData, refetch: refetchTransferred } = useReadContract({
     address: campaignAddress,
     abi: CAMPAIGN_ABI,
     functionName: "transferred",
     args: address ? [address] : undefined,
-    query: {
-      enabled: !!address,
-      refetchInterval: (query) => {
-        if (!claimed) return false;
-        return query.state.data === true ? false : 5000;
-      },
-    },
+    query: { enabled: !!address },
   });
 
   const transferred = transferredData === true;
@@ -111,17 +132,51 @@ export default function RecipientPage() {
   if (allocationSetData !== undefined && !allocationSet) {
     return (
       <Alert variant="muted">
-        <AlertTitle>Preview mode · no allocation</AlertTitle>
+        <AlertTitle>You are not on this campaign's recipient list</AlertTitle>
         <AlertDescription>
-          This wallet ({short(address)}) is not registered for this campaign.
-          Ask the admin to add you, then reload. Until then there's nothing to
-          claim from here — your wallet's token balance is on the Overview tab.
+          Wallet {short(address)} has no allocation registered. Ask the admin
+          to add you, then reload.
         </AlertDescription>
       </Alert>
     );
   }
 
-  // States C / D / E / F — top-line status alert.
+  // V7 · campaign in Failed state. Three sub-states based on campaign
+  // balance: loading / already-cancelled / awaiting-admin-cancel.
+  if (stateNum === STATE_FAILED) {
+    if (campaignBalance === undefined) {
+      return (
+        <Alert variant="muted">
+          <AlertTitle>Verifying campaign state…</AlertTitle>
+          <AlertDescription />
+        </Alert>
+      );
+    }
+    if (campaignBalance === 0n) {
+      return (
+        <Alert variant="destructive">
+          <AlertTitle>Campaign cancelled by admin</AlertTitle>
+          <AlertDescription>
+            The KMS sum check failed and the admin terminated this campaign.
+            Funds have been returned to the admin via <code>cancelCampaign</code>.
+          </AlertDescription>
+        </Alert>
+      );
+    }
+    return (
+      <Alert variant="destructive">
+        <AlertTitle>Campaign in Failed state</AlertTitle>
+        <AlertDescription>
+          The KMS sum check failed (sum of allocations ≠ declaredTotal). The
+          admin has not yet called <code>cancelCampaign</code> to recover the
+          funds. There is no claim path here — please contact your admin to
+          terminate the campaign.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  // States C / D / F — top-line status alert.
   const statusAlert = transferred ? (
     <Alert variant="info">
       <AlertTitle>Settlement complete</AlertTitle>
@@ -129,14 +184,6 @@ export default function RecipientPage() {
         Your tokens have been transferred. The amount is now visible on-chain
         via the ERC-20 Transfer event — that's the documented privacy boundary
         (encrypted up to claim, public on settlement).
-      </AlertDescription>
-    </Alert>
-  ) : claimed ? (
-    <Alert variant="warning">
-      <AlertTitle>Awaiting settlement</AlertTitle>
-      <AlertDescription>
-        You've claimed. The off-chain executor is now decrypting your amount via
-        KMS and submitting the ERC-20 transfer. Typically ~30 seconds.
       </AlertDescription>
     </Alert>
   ) : isFinalized ? (
@@ -183,6 +230,7 @@ export default function RecipientPage() {
         account={address}
         decimals={decimals}
         symbol={symbol}
+        transferred={transferred}
       />
     </div>
   );

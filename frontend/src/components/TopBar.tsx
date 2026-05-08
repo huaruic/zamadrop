@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAccount, useConnect, useDisconnect } from "wagmi";
 import type { Connector } from "wagmi";
 
@@ -42,6 +43,12 @@ export function TopBar() {
 
         <div className="flex items-center gap-3">
           <Badge variant="outline">⌗ Sepolia</Badge>
+
+          {isConnected && (
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/wizard">+ Deploy</Link>
+            </Button>
+          )}
 
           {isConnected ? (
             <Button

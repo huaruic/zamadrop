@@ -38,11 +38,39 @@ export function formatTokenAmount(
   return symbol ? `${formatted} ${symbol}` : formatted;
 }
 
-/** Inverse: parse a user-typed amount string into uint64 base units. */
+// Strict decimal parts: whole part = digits-only (no leading zeros except "0"),
+// fractional = digits-only. Bare BigInt() would silently accept "0x10" as hex,
+// turn "" into 0n, and parse "  5  " — none of which is acceptable for token
+// amount input.
+const STRICT_DIGITS = /^(?:0|[1-9][0-9]*)$/;
+const FRAC_DIGITS = /^[0-9]+$/;
+
+/** Inverse: parse a user-typed amount string into uint64 base units.
+ *
+ * Strict: rejects whitespace, exponents, hex, signs, and empty fractional
+ * parts. Throws on malformed input rather than silently returning 0n. */
 export function parseTokenAmount(input: string, decimals: number): bigint {
-  if (!input) return 0n;
-  const trimmed = input.trim();
-  const [whole = "0", frac = ""] = trimmed.split(".");
+  if (typeof input !== "string" || input.length === 0) {
+    throw new Error("empty token amount");
+  }
+  if (input !== input.trim()) {
+    throw new Error(`invalid token amount: "${input}"`);
+  }
+  const dotIndex = input.indexOf(".");
+  const whole = dotIndex === -1 ? input : input.slice(0, dotIndex);
+  const frac = dotIndex === -1 ? "" : input.slice(dotIndex + 1);
+
+  if (!STRICT_DIGITS.test(whole)) {
+    throw new Error(`invalid token amount: "${input}"`);
+  }
+  if (frac.length > 0 && !FRAC_DIGITS.test(frac)) {
+    throw new Error(`invalid token amount: "${input}"`);
+  }
+  if (frac.length > decimals) {
+    throw new Error(
+      `too many fractional digits (max ${decimals}): "${input}"`,
+    );
+  }
   const padded = (frac + "0".repeat(decimals)).slice(0, decimals);
   return BigInt(whole) * 10n ** BigInt(decimals) + BigInt(padded || "0");
 }

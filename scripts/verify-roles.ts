@@ -15,6 +15,14 @@ const TOKEN = deployment.contracts.MockToken.address;
 const CAMPAIGN = deployment.contracts.ZamaDropCampaign.address;
 const ZERO = "0x0000000000000000000000000000000000000000000000000000000000000000";
 
+// V7: enum State { Setup, Finalizing, Claiming, Failed }
+const STATE_LABELS = ["Setup", "Finalizing", "Claiming", "Failed"] as const;
+
+function stateLabel(s: bigint | number): string {
+  const idx = Number(s);
+  return STATE_LABELS[idx] ?? `Unknown(${idx})`;
+}
+
 function shortAddr(addr: string) {
   return `${addr.slice(0, 8)}…${addr.slice(-6)}`;
 }
@@ -31,7 +39,7 @@ async function main() {
   const me = signer.address;
 
   console.log("════════════════════════════════════════════════════════════");
-  console.log("  ZamaDrop · Role + State Verification");
+  console.log("  ZamaDrop · Role + State Verification (V7)");
   console.log("════════════════════════════════════════════════════════════");
   console.log(`network:  ${hre.network.name}`);
   console.log(`signer:   ${me}  ← the wallet running this script`);
@@ -44,28 +52,30 @@ async function main() {
   const auditor = await campaign.auditor();
   const declaredTotal = await campaign.declaredTotal();
   const recipientCount = await campaign.recipientCount();
-  const finalized = await campaign.finalized();
+  const allocationCount = await campaign.allocationCount();
+  const claimedTotalPlaintext = await campaign.claimedTotalPlaintext();
+  const recipientListHash = await campaign.recipientListHash();
+  const stateValue = await campaign.state();
+  const finalizedLegacy = await campaign.finalized();
   const finalizeCheckHandle = await campaign.finalizeCheckHandle();
   const tokenAddr = await campaign.token();
 
   console.log("[1] Public campaign state");
-  console.log(`    admin:                ${admin}`);
-  console.log(`    auditor:              ${auditor}`);
-  console.log(`    token:                ${tokenAddr}`);
-  console.log(`    declaredTotal:        ${declaredTotal}`);
-  console.log(`    recipientCount:       ${recipientCount}`);
-  console.log(`    finalized:            ${finalized}`);
-  console.log(`    finalizeCheckHandle:  ${shortHandle(finalizeCheckHandle)}`);
-
-  // ── 2. Phase derivation (mirrors AdminPage logic) ────────────────
-  let phase: string;
-  if (finalized) phase = "Claiming";
-  else if (finalizeCheckHandle === ZERO) phase = "Setup";
-  else phase = "Finalize-pending";
-  console.log(`    derived phase:        ${phase}`);
+  console.log(`    admin:                  ${admin}`);
+  console.log(`    auditor:                ${auditor}`);
+  console.log(`    token:                  ${tokenAddr}`);
+  console.log(`    declaredTotal:          ${declaredTotal}`);
+  console.log(`    recipientCount:         ${recipientCount}`);
+  console.log(`    allocationCount:        ${allocationCount}`);
+  console.log(`    claimedTotalPlaintext:  ${claimedTotalPlaintext}`);
+  console.log(`    recipientListHash:      ${recipientListHash}`);
+  console.log(`    state:                  ${stateValue} (${stateLabel(stateValue)})`);
+  console.log(`    finalized() legacy:     ${finalizedLegacy}`);
+  console.log(`    finalizeCheckHandle:    ${shortHandle(finalizeCheckHandle)}`);
+  console.log(`    derived phase:          ${stateLabel(stateValue)}`);
   console.log("");
 
-  // ── 3. My role on this campaign ──────────────────────────────────
+  // ── 2. My role on this campaign ──────────────────────────────────
   const isAdmin = me.toLowerCase() === admin.toLowerCase();
   const isAuditor = me.toLowerCase() === auditor.toLowerCase();
   const isAllocSet = await campaign.allocationSet(me);
@@ -88,7 +98,7 @@ async function main() {
   );
   console.log("");
 
-  // ── 4. All recipients + their per-address state ──────────────────
+  // ── 3. All recipients + their per-address state ──────────────────
   const latestForEvents = await ethers.provider.getBlockNumber();
   const eventFromBlock = Math.max(0, latestForEvents - 49000);
   const allocFilter = campaign.filters.AllocationSet();
@@ -120,18 +130,22 @@ async function main() {
   }
   console.log("");
 
-  // ── 5. Token escrow check ────────────────────────────────────────
+  // ── 4. Token escrow check ────────────────────────────────────────
   const escrow = await token.balanceOf(CAMPAIGN);
   const tokenSymbol = await token.symbol();
-  console.log("[4] Token escrow");
+  // V7 solvency invariant: balance >= declaredTotal − claimedTotalPlaintext
+  const stillOwed = BigInt(declaredTotal) - BigInt(claimedTotalPlaintext);
+  console.log("[4] Token escrow & V7 solvency invariant");
   console.log(`    campaign balance:     ${escrow} ${tokenSymbol}`);
   console.log(`    declaredTotal:        ${declaredTotal} ${tokenSymbol}`);
+  console.log(`    claimedTotalPlaintext:${claimedTotalPlaintext} ${tokenSymbol}`);
+  console.log(`    stillOwed:            ${stillOwed} ${tokenSymbol}`);
   console.log(
-    `    escrow ≥ declared:    ${escrow >= declaredTotal}  ← true means contract has enough to settle every claim`,
+    `    balance ≥ stillOwed:  ${BigInt(escrow) >= stillOwed}  ← true means contract can settle every remaining claim`,
   );
   console.log("");
 
-  // ── 6. Event timeline ────────────────────────────────────────────
+  // ── 5. Event timeline ────────────────────────────────────────────
   const latest = await ethers.provider.getBlockNumber();
   const fromBlock = Math.max(0, latest - 49000);
   console.log(
@@ -159,7 +173,8 @@ async function main() {
   }
   console.log("");
 
-  // ── 7. Role-page expected behavior summary ───────────────────────
+  // ── 6. Role-page expected behavior summary ───────────────────────
+  const phase = stateLabel(stateValue);
   console.log("[6] Frontend role-page gating expectation for this signer:");
   console.log(`    /campaign/${CAMPAIGN.slice(0, 6)}…${CAMPAIGN.slice(-4)}/admin   → ${isAdmin ? "WRITE-enabled (set + finalize)" : "read-only banner"}`);
   console.log(`    /campaign/${CAMPAIGN.slice(0, 6)}…${CAMPAIGN.slice(-4)}/me      → ${isAllocSet ? phase === "Claiming" && !isClaimed ? "Decrypt + Claim active" : isClaimed && !isTransferred ? "Awaiting settlement (executor)" : isTransferred ? "Done" : "Decrypt only (waiting for finalize)" : "No allocation banner"}`);

@@ -31,6 +31,71 @@ async function publicDecryptWithProof(handle: string): Promise<{
   };
 }
 
+// 计算 recipientList hash（与合约里 keccak256(abi.encode(recipients)) 对齐）
+function computeListHash(recipients: string[]): string {
+  return ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(["address[]"], [recipients])
+  );
+}
+
+interface DeployOpts {
+  admin: HardhatEthersSigner;
+  auditor: HardhatEthersSigner;
+  recipients: string[];
+  declaredTotal?: bigint;
+  fundEscrow?: bigint | "declared" | false; // false = no fund, "declared" = declaredTotal, bigint = explicit
+  tokenSupply?: bigint; // 给 admin 的初始 token 余额；默认 = declaredTotal
+  listHashOverride?: string; // 测试 hash mismatch 时用
+}
+
+interface DeployResult {
+  campaign: Awaited<ReturnType<typeof ethers.getContractAt>>;
+  campaignAddress: string;
+  token: Awaited<ReturnType<typeof ethers.getContractAt>>;
+  tokenAddress: string;
+  listHash: string;
+}
+
+async function deployCampaign(opts: DeployOpts): Promise<DeployResult> {
+  const declaredTotal = opts.declaredTotal ?? 1000n;
+  const tokenSupply = opts.tokenSupply ?? declaredTotal;
+
+  const TokenFactory = await ethers.getContractFactory("MockToken");
+  const token = await TokenFactory.connect(opts.admin).deploy(
+    "ZamaDrop Test Token",
+    "ZDT",
+    tokenSupply,
+    opts.admin.address
+  );
+  await token.waitForDeployment();
+  const tokenAddress = await token.getAddress();
+
+  const listHash = opts.listHashOverride ?? computeListHash(opts.recipients);
+
+  const Factory = await ethers.getContractFactory("ZamaDropCampaign");
+  const deployed = await Factory.connect(opts.admin).deploy(
+    opts.admin.address,
+    opts.auditor.address,
+    tokenAddress,
+    declaredTotal,
+    opts.recipients,
+    listHash
+  );
+  await deployed.waitForDeployment();
+  const campaignAddress = await deployed.getAddress();
+  const campaign = await ethers.getContractAt("ZamaDropCampaign", campaignAddress);
+  const tokenContract = await ethers.getContractAt("MockToken", tokenAddress);
+
+  // Default: fund escrow with declaredTotal so legacy finalize tests pass
+  const fund = opts.fundEscrow ?? "declared";
+  if (fund !== false) {
+    const amount = fund === "declared" ? declaredTotal : fund;
+    await token.connect(opts.admin).transfer(campaignAddress, amount);
+  }
+
+  return { campaign, campaignAddress, token: tokenContract, tokenAddress, listHash };
+}
+
 describe("ZamaDropCampaign", function () {
   let contractAddress: string;
   let contract: Awaited<ReturnType<typeof ethers.getContractAt>>;
@@ -42,38 +107,21 @@ describe("ZamaDropCampaign", function () {
   let other: HardhatEthersSigner;
 
   const DECLARED_TOTAL = 1000n;
-  const RECIPIENT_COUNT = 2n;
   const ALLOC_1 = 600n;
   const ALLOC_2 = 400n; // 总和 = 1000 = DECLARED_TOTAL
 
   beforeEach(async function () {
     [admin, recipient1, recipient2, auditor, other] = await ethers.getSigners();
 
-    // 部署 MockToken（admin 持有 declaredTotal）
-    const TokenFactory = await ethers.getContractFactory("MockToken");
-    const token = await TokenFactory.connect(admin).deploy(
-      "ZamaDrop Test Token",
-      "ZDT",
-      DECLARED_TOTAL,
-      admin.address
-    );
-    await token.waitForDeployment();
-    const tokenAddress = await token.getAddress();
-
-    const Factory = await ethers.getContractFactory("ZamaDropCampaign");
-    const deployed = await Factory.connect(admin).deploy(
-      DECLARED_TOTAL,
-      RECIPIENT_COUNT,
-      auditor.address,
-      tokenAddress
-    );
-    await deployed.waitForDeployment();
-    contractAddress = await deployed.getAddress();
-    contract = await ethers.getContractAt("ZamaDropCampaign", contractAddress);
-    tokenContract = await ethers.getContractAt("MockToken", tokenAddress);
-
-    // 把 escrow 转入 campaign 合约（让 executeTransfer 时有钱可转）
-    await token.connect(admin).transfer(contractAddress, DECLARED_TOTAL);
+    const result = await deployCampaign({
+      admin,
+      auditor,
+      recipients: [recipient1.address, recipient2.address],
+      declaredTotal: DECLARED_TOTAL,
+    });
+    contract = result.campaign;
+    contractAddress = result.campaignAddress;
+    tokenContract = result.token;
   });
 
   // ─────────────────────────────────────────────
@@ -82,10 +130,71 @@ describe("ZamaDropCampaign", function () {
   describe("部署初始状态", function () {
     it("应正确设置 declaredTotal、recipientCount、admin、auditor", async function () {
       expect(await contract.declaredTotal()).to.equal(DECLARED_TOTAL);
-      expect(await contract.recipientCount()).to.equal(RECIPIENT_COUNT);
+      expect(await contract.recipientCount()).to.equal(2n);
       expect(await contract.admin()).to.equal(admin.address);
       expect(await contract.auditor()).to.equal(auditor.address);
       expect(await contract.finalized()).to.equal(false);
+    });
+
+    it("recipientListHash getter 返回构造器传入的 hash", async function () {
+      const expected = computeListHash([recipient1.address, recipient2.address]);
+      expect(await contract.recipientListHash()).to.equal(expected);
+    });
+
+    it("deployer ≠ admin: admin() 返回构造器参数而不是 msg.sender", async function () {
+      // 用 `other` 作为部署者，admin 显式传入 admin（不同地址）
+      const TokenFactory = await ethers.getContractFactory("MockToken");
+      const freshToken = await TokenFactory.connect(other).deploy(
+        "ZDT",
+        "ZDT",
+        DECLARED_TOTAL,
+        admin.address
+      );
+      await freshToken.waitForDeployment();
+
+      const recipients = [recipient1.address, recipient2.address];
+      const listHash = computeListHash(recipients);
+
+      const Factory = await ethers.getContractFactory("ZamaDropCampaign");
+      // other 部署，但 admin_ = admin
+      const deployed = await Factory.connect(other).deploy(
+        admin.address,
+        auditor.address,
+        await freshToken.getAddress(),
+        DECLARED_TOTAL,
+        recipients,
+        listHash
+      );
+      await deployed.waitForDeployment();
+
+      expect(await deployed.admin()).to.equal(admin.address);
+      expect(await deployed.admin()).to.not.equal(other.address);
+    });
+
+    it("hash 不一致时部署应 revert HashMismatch", async function () {
+      const recipients = [recipient1.address, recipient2.address];
+      const wrongHash = ethers.keccak256(ethers.toUtf8Bytes("wrong"));
+
+      const TokenFactory = await ethers.getContractFactory("MockToken");
+      const freshToken = await TokenFactory.connect(admin).deploy(
+        "ZDT",
+        "ZDT",
+        DECLARED_TOTAL,
+        admin.address
+      );
+      await freshToken.waitForDeployment();
+
+      const Factory = await ethers.getContractFactory("ZamaDropCampaign");
+      await expect(
+        Factory.connect(admin).deploy(
+          admin.address,
+          auditor.address,
+          await freshToken.getAddress(),
+          DECLARED_TOTAL,
+          recipients,
+          wrongHash
+        )
+      ).to.be.revertedWithCustomError(Factory, "HashMismatch");
     });
   });
 
@@ -117,6 +226,32 @@ describe("ZamaDropCampaign", function () {
       await expect(
         contract.connect(admin).setAllocation(recipient1.address, h2, p2)
       ).to.be.revertedWithCustomError(contract, "AllocationAlreadySet");
+    });
+
+    it("allocationCount 每次 setAllocation 后递增", async function () {
+      expect(await contract.allocationCount()).to.equal(0n);
+
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      expect(await contract.allocationCount()).to.equal(1n);
+
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+      expect(await contract.allocationCount()).to.equal(2n);
+    });
+
+    it("Finalizing 状态下（callback 未到）setAllocation 应 revert AlreadyFinalized", async function () {
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await contract.connect(admin).finalize(); // → Finalizing，未回调
+
+      const { handle: h3, proof: p3 } = await encryptAmount(contractAddress, admin.address, 50n);
+      await expect(
+        contract.connect(admin).setAllocation(other.address, h3, p3)
+      ).to.be.revertedWithCustomError(contract, "AlreadyFinalized");
     });
 
     it("finalize 之后不可再设置 allocation", async function () {
@@ -160,9 +295,11 @@ describe("ZamaDropCampaign", function () {
     });
 
     it("总量不符时 finalized 应保持 false", async function () {
-      // 故意只设置一个，总量不足
+      // 两个 recipient 都设置，但金额加起来 ≠ DECLARED_TOTAL，sumCheck 返回 false
       const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
       await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_1); // 故意错
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
 
       await contract.connect(admin).finalize();
       const handle = await contract.finalizeCheckHandle();
@@ -177,6 +314,59 @@ describe("ZamaDropCampaign", function () {
       await expect(
         contract.connect(other).finalize()
       ).to.be.revertedWithCustomError(contract, "NotAdmin");
+    });
+
+    it("allocationCount != recipientCount 时 finalize 以 CountMismatch revert", async function () {
+      // 只设置 1 个 recipient（recipientCount = 2）
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+
+      await expect(
+        contract.connect(admin).finalize()
+      ).to.be.revertedWithCustomError(contract, "CountMismatch");
+    });
+
+    it("allocationCount == recipientCount 时 finalize 通过 count 检查继续到 FHE 阶段", async function () {
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await expect(contract.connect(admin).finalize()).to.not.be.reverted;
+      // FinalizeRequested 事件已发出，handle 不为零
+      expect(await contract.finalizeCheckHandle()).to.not.equal(
+        "0x0000000000000000000000000000000000000000000000000000000000000000"
+      );
+    });
+
+    it("escrow 不足时 finalize 以 NotFunded revert", async function () {
+      // 部署一个不注资的 campaign
+      const { campaign, campaignAddress } = await deployCampaign({
+        admin,
+        auditor,
+        recipients: [recipient1.address, recipient2.address],
+        declaredTotal: DECLARED_TOTAL,
+        fundEscrow: false,
+      });
+
+      const { handle: h1, proof: p1 } = await encryptAmount(campaignAddress, admin.address, ALLOC_1);
+      await campaign.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(campaignAddress, admin.address, ALLOC_2);
+      await campaign.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await expect(
+        campaign.connect(admin).finalize()
+      ).to.be.revertedWithCustomError(campaign, "NotFunded");
+    });
+
+    it("escrow 恰好等于 declaredTotal 时 finalize 通过 NotFunded 检查", async function () {
+      // 默认 helper 已注资 declaredTotal
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await expect(contract.connect(admin).finalize()).to.not.be.reverted;
     });
 
     it("KMS proof 校验下，任何账户都可提交 callbackFinalize（信任根是签名而非身份）", async function () {
@@ -274,23 +464,13 @@ describe("ZamaDropCampaign", function () {
     });
 
     it("finalize 前 claim 应 revert", async function () {
-      // 重新部署一个未 finalize 的合约（同时部署一个 fresh token）
-      const TokenFactory = await ethers.getContractFactory("MockToken");
-      const freshToken = await TokenFactory.connect(admin).deploy(
-        "ZamaDrop Test Token",
-        "ZDT",
-        DECLARED_TOTAL,
-        admin.address
-      );
-      await freshToken.waitForDeployment();
-      const Factory = await ethers.getContractFactory("ZamaDropCampaign");
-      const fresh = await Factory.connect(admin).deploy(
-        DECLARED_TOTAL,
-        RECIPIENT_COUNT,
-        auditor.address,
-        await freshToken.getAddress()
-      );
-      await fresh.waitForDeployment();
+      // 重新部署一个未 finalize 的合约
+      const { campaign: fresh } = await deployCampaign({
+        admin,
+        auditor,
+        recipients: [recipient1.address, recipient2.address],
+        declaredTotal: DECLARED_TOTAL,
+      });
       await expect(
         fresh.connect(recipient1).claim()
       ).to.be.revertedWithCustomError(fresh, "NotFinalized");
@@ -430,6 +610,350 @@ describe("ZamaDropCampaign", function () {
       const pending = await contract.pendingClaimHandle(recipient1.address);
       const decrypted = await hre.fhevm.publicDecryptEuint(FhevmType.euint64, pending);
       expect(decrypted).to.equal(ALLOC_1);
+    });
+
+    it("claimedTotalPlaintext 在多次成功 executeTransfer 后累加", async function () {
+      expect(await contract.claimedTotalPlaintext()).to.equal(0n);
+
+      // recipient1 claim + executeTransfer
+      await contract.connect(recipient1).claim();
+      const pending1 = await contract.pendingClaimHandle(recipient1.address);
+      const { decryptionProof: proof1 } = await publicDecryptWithProof(pending1);
+      await contract.connect(other).executeTransfer(recipient1.address, ALLOC_1, proof1);
+      expect(await contract.claimedTotalPlaintext()).to.equal(ALLOC_1);
+
+      // recipient2 claim + executeTransfer
+      await contract.connect(recipient2).claim();
+      const pending2 = await contract.pendingClaimHandle(recipient2.address);
+      const { decryptionProof: proof2 } = await publicDecryptWithProof(pending2);
+      await contract.connect(other).executeTransfer(recipient2.address, ALLOC_2, proof2);
+      expect(await contract.claimedTotalPlaintext()).to.equal(ALLOC_1 + ALLOC_2);
+    });
+  });
+
+  // ─────────────────────────────────────────────
+  // V7: state machine
+  // ─────────────────────────────────────────────
+  describe("state machine", function () {
+    // enum State { Setup, Finalizing, Claiming, Failed }
+    const STATE_SETUP = 0n;
+    const STATE_FINALIZING = 1n;
+    const STATE_CLAIMING = 2n;
+    const STATE_FAILED = 3n;
+
+    it("初始状态为 Setup", async function () {
+      expect(await contract.state()).to.equal(STATE_SETUP);
+    });
+
+    it("finalize() 成功后进入 Finalizing", async function () {
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await contract.connect(admin).finalize();
+      expect(await contract.state()).to.equal(STATE_FINALIZING);
+    });
+
+    it("callbackFinalize(true) 后进入 Claiming", async function () {
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await contract.connect(admin).finalize();
+      const handle = await contract.finalizeCheckHandle();
+      const { ebool: result, decryptionProof } = await publicDecryptWithProof(handle);
+      expect(result).to.equal(true);
+      await contract.connect(admin).callbackFinalize(result, decryptionProof);
+
+      expect(await contract.state()).to.equal(STATE_CLAIMING);
+    });
+
+    it("callbackFinalize(false) 后进入 Failed（终态）", async function () {
+      // 故意配错 allocation，让 sumCheck 解出 false
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await contract.connect(admin).finalize();
+      const handle = await contract.finalizeCheckHandle();
+      const { ebool: result, decryptionProof } = await publicDecryptWithProof(handle);
+      expect(result).to.equal(false);
+      await contract.connect(admin).callbackFinalize(result, decryptionProof);
+
+      expect(await contract.state()).to.equal(STATE_FAILED);
+    });
+
+    it("非 Setup 状态调用 finalize 应 revert", async function () {
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await contract.connect(admin).finalize();
+      // 现在是 Finalizing；再调一次 finalize 应 revert
+      await expect(
+        contract.connect(admin).finalize()
+      ).to.be.revertedWithCustomError(contract, "NotSetup");
+    });
+
+    it("非 Finalizing 状态调用 callbackFinalize 应 revert（包括 Setup 阶段）", async function () {
+      // Setup 阶段直接调 callbackFinalize 应 revert（即便携带签名也不行）
+      await expect(
+        contract.connect(admin).callbackFinalize(true, "0x")
+      ).to.be.revertedWithCustomError(contract, "NotFinalizing");
+    });
+
+    it("callbackFinalize 重放应 revert", async function () {
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await contract.connect(admin).finalize();
+      const handle = await contract.finalizeCheckHandle();
+      const { ebool: result, decryptionProof } = await publicDecryptWithProof(handle);
+      await contract.connect(admin).callbackFinalize(result, decryptionProof);
+
+      // 重放：state 已是 Claiming，回放 revert
+      await expect(
+        contract.connect(admin).callbackFinalize(result, decryptionProof)
+      ).to.be.revertedWithCustomError(contract, "NotFinalizing");
+    });
+
+    it("Finalizing 状态下 claim 应 revert（NotFinalized）", async function () {
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await contract.connect(admin).finalize(); // → Finalizing，未回调
+
+      await expect(
+        contract.connect(recipient1).claim()
+      ).to.be.revertedWithCustomError(contract, "NotFinalized");
+    });
+
+    it("Failed 状态下 setAllocation 应 revert NotSetup", async function () {
+      // 配错 allocation 让 callback 解出 false → Failed
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+      await contract.connect(admin).finalize();
+      const handle = await contract.finalizeCheckHandle();
+      const { ebool: result, decryptionProof } = await publicDecryptWithProof(handle);
+      await contract.connect(admin).callbackFinalize(result, decryptionProof);
+
+      const { handle: h3, proof: p3 } = await encryptAmount(contractAddress, admin.address, 100n);
+      await expect(
+        contract.connect(admin).setAllocation(other.address, h3, p3)
+      ).to.be.revertedWithCustomError(contract, "NotSetup");
+    });
+
+    it("Failed 状态下 claim 应 revert（NotFailed）", async function () {
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await contract.connect(admin).finalize();
+      const handle = await contract.finalizeCheckHandle();
+      const { ebool: result, decryptionProof } = await publicDecryptWithProof(handle);
+      await contract.connect(admin).callbackFinalize(result, decryptionProof);
+
+      await expect(
+        contract.connect(recipient1).claim()
+      ).to.be.revertedWithCustomError(contract, "NotFailed");
+    });
+
+    it("finalized() 视图返回 state == Claiming（向后兼容）", async function () {
+      expect(await contract.finalized()).to.equal(false);
+
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await contract.connect(admin).finalize();
+      expect(await contract.finalized()).to.equal(false); // Finalizing → false
+
+      const handle = await contract.finalizeCheckHandle();
+      const { ebool: result, decryptionProof } = await publicDecryptWithProof(handle);
+      await contract.connect(admin).callbackFinalize(result, decryptionProof);
+      expect(await contract.finalized()).to.equal(true); // Claiming → true
+    });
+  });
+
+  // ─────────────────────────────────────────────
+  // V7: withdrawExcess
+  // ─────────────────────────────────────────────
+  describe("withdrawExcess", function () {
+    // helper：deploy 一个超额注资的 campaign，并把它带到 Claiming 状态
+    async function deployFundedAndClaim(extraFund: bigint) {
+      const result = await deployCampaign({
+        admin,
+        auditor,
+        recipients: [recipient1.address, recipient2.address],
+        declaredTotal: DECLARED_TOTAL,
+        tokenSupply: DECLARED_TOTAL + extraFund,
+        fundEscrow: DECLARED_TOTAL + extraFund,
+      });
+      const { handle: h1, proof: p1 } = await encryptAmount(
+        result.campaignAddress,
+        admin.address,
+        ALLOC_1
+      );
+      await result.campaign.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(
+        result.campaignAddress,
+        admin.address,
+        ALLOC_2
+      );
+      await result.campaign.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await result.campaign.connect(admin).finalize();
+      const fhHandle = await result.campaign.finalizeCheckHandle();
+      const { ebool: ok, decryptionProof } = await publicDecryptWithProof(fhHandle);
+      await result.campaign.connect(admin).callbackFinalize(ok, decryptionProof);
+      return result;
+    }
+
+    it("非 admin 调用应 revert NotAdmin", async function () {
+      const { campaign } = await deployFundedAndClaim(500n);
+      await expect(
+        campaign.connect(other).withdrawExcess(1n)
+      ).to.be.revertedWithCustomError(campaign, "NotAdmin");
+    });
+
+    it("无可取余额时 revert NoExcess", async function () {
+      // balance == declaredTotal == stillOwed, 没有 excess
+      const { campaign } = await deployFundedAndClaim(0n);
+      await expect(
+        campaign.connect(admin).withdrawExcess(1n)
+      ).to.be.revertedWithCustomError(campaign, "NoExcess");
+    });
+
+    it("amount 超过 maxWithdraw 时 revert ExceedsExcess", async function () {
+      // 多注资 500（balance=1500, stillOwed=1000, maxWithdraw=500）
+      const { campaign } = await deployFundedAndClaim(500n);
+      await expect(
+        campaign.connect(admin).withdrawExcess(501n)
+      ).to.be.revertedWithCustomError(campaign, "ExceedsExcess");
+    });
+
+    it("Admin 在可取范围内成功取走多余余额并 emit ExcessWithdrawn", async function () {
+      const { campaign, campaignAddress, token: tk } = await deployFundedAndClaim(500n);
+
+      const adminBalanceBefore = await tk.balanceOf(admin.address);
+      await expect(campaign.connect(admin).withdrawExcess(500n))
+        .to.emit(campaign, "ExcessWithdrawn")
+        .withArgs(500n, 1000n);
+
+      expect(await tk.balanceOf(admin.address)).to.equal(adminBalanceBefore + 500n);
+      expect(await tk.balanceOf(campaignAddress)).to.equal(1000n);
+    });
+
+    it("claim 后 maxWithdraw 减少：claimed 部分计入 stillOwed 的减项", async function () {
+      // balance=1500, declaredTotal=1000；recipient1 claim 600 后 claimedTotalPlaintext=600
+      // stillOwed = 1000 - 600 = 400, maxWithdraw = 1500 - 600 (transferred) - 400 = 500
+      const { campaign } = await deployFundedAndClaim(500n);
+
+      // recipient1 claim + executeTransfer
+      await campaign.connect(recipient1).claim();
+      const pending = await campaign.pendingClaimHandle(recipient1.address);
+      const { decryptionProof } = await publicDecryptWithProof(pending);
+      await campaign.connect(other).executeTransfer(recipient1.address, ALLOC_1, decryptionProof);
+
+      // balance now = 1500 - 600 = 900
+      // stillOwed = 1000 - 600 = 400
+      // maxWithdraw = 900 - 400 = 500
+      // 取 500 应成功，取 501 应 revert
+      await expect(
+        campaign.connect(admin).withdrawExcess(501n)
+      ).to.be.revertedWithCustomError(campaign, "ExceedsExcess");
+      await expect(campaign.connect(admin).withdrawExcess(500n)).to.not.be.reverted;
+    });
+
+    it("非 Claiming 状态（Setup）下 withdrawExcess 应 revert NotClaiming", async function () {
+      // 默认部署：state = Setup
+      await expect(
+        contract.connect(admin).withdrawExcess(1n)
+      ).to.be.revertedWithCustomError(contract, "NotClaiming");
+    });
+  });
+
+  // ─────────────────────────────────────────────
+  // V7: cancelCampaign
+  // ─────────────────────────────────────────────
+  describe("cancelCampaign", function () {
+    // helper：部署 + 设置错误总量的 allocation，让 callbackFinalize(false) 进入 Failed
+    async function deployToFailed() {
+      const result = await deployCampaign({
+        admin,
+        auditor,
+        recipients: [recipient1.address, recipient2.address],
+        declaredTotal: DECLARED_TOTAL,
+      });
+      const { handle: h1, proof: p1 } = await encryptAmount(
+        result.campaignAddress,
+        admin.address,
+        ALLOC_1
+      );
+      await result.campaign.connect(admin).setAllocation(recipient1.address, h1, p1);
+      // 故意错配
+      const { handle: h2, proof: p2 } = await encryptAmount(
+        result.campaignAddress,
+        admin.address,
+        ALLOC_1
+      );
+      await result.campaign.connect(admin).setAllocation(recipient2.address, h2, p2);
+
+      await result.campaign.connect(admin).finalize();
+      const fhHandle = await result.campaign.finalizeCheckHandle();
+      const { ebool: ok, decryptionProof } = await publicDecryptWithProof(fhHandle);
+      await result.campaign.connect(admin).callbackFinalize(ok, decryptionProof);
+      return result;
+    }
+
+    it("非 admin 调用应 revert NotAdmin", async function () {
+      const { campaign } = await deployToFailed();
+      await expect(
+        campaign.connect(other).cancelCampaign()
+      ).to.be.revertedWithCustomError(campaign, "NotAdmin");
+    });
+
+    it("非 Failed 状态调用 应 revert NotFailed（Setup 状态）", async function () {
+      // 默认 fixture state = Setup
+      await expect(
+        contract.connect(admin).cancelCampaign()
+      ).to.be.revertedWithCustomError(contract, "NotFailed");
+    });
+
+    it("Failed 状态下 admin 取回全部余额并 emit CampaignCancelled", async function () {
+      const { campaign, campaignAddress, token: tk } = await deployToFailed();
+      const balance = await tk.balanceOf(campaignAddress);
+      expect(balance).to.equal(DECLARED_TOTAL);
+
+      const adminBefore = await tk.balanceOf(admin.address);
+      await expect(campaign.connect(admin).cancelCampaign())
+        .to.emit(campaign, "CampaignCancelled")
+        .withArgs(balance);
+
+      expect(await tk.balanceOf(campaignAddress)).to.equal(0n);
+      expect(await tk.balanceOf(admin.address)).to.equal(adminBefore + balance);
+    });
+
+    it("重复调用：第二次 balance=0 仍 emit 0，不 revert（state 终态 Failed）", async function () {
+      const { campaign } = await deployToFailed();
+      await campaign.connect(admin).cancelCampaign();
+
+      // 第二次调用：balance 已是 0，不再 safeTransfer，但仍 emit CampaignCancelled(0)
+      await expect(campaign.connect(admin).cancelCampaign())
+        .to.emit(campaign, "CampaignCancelled")
+        .withArgs(0n);
     });
   });
 });

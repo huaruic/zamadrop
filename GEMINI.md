@@ -66,3 +66,7 @@ See [`docs/SECURITY.md`](./docs/SECURITY.md). `callbackFinalize` and
 `executeTransfer` are permissionless callers but verify Zama KMS threshold
 signatures via `FHE.checkSignatures` before mutating state. Trust root is
 the KMS signature, not the caller.
+
+## Scratch Output Policy
+
+Do not create agent-specific planning folders under `docs/`, including `docs/superpowers/` (now .gitignore'd). If a planning or brainstorming tool wants to write there, redirect durable content into `openspec/changes/<change-id>/` as proposal/design/tasks/specs. Keep disposable notes in `.private/` only. See AGENTS.md "文档落点规则" for the canonical mapping.
