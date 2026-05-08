@@ -145,10 +145,11 @@ export async function executeDeployment(
   // ── 5.3 setAllocation × N ─────────────────────────────────────────
   // Drops with N > 5 use the batched primitive (setAllocationsBatch) to
   // collapse N wallet signatures into ⌈N / BATCH_SIZE⌉ — for N=500, this
-  // is 16 popups instead of 500. See openspec/changes/bulk-allocation/
-  // design.md §1 for the BATCH_SIZE = 32 derivation. Small drops (≤ 5)
-  // keep the single-call path so trivial campaigns still spend exactly
-  // one popup per recipient with no batching overhead.
+  // is 32 popups instead of 500. See openspec/changes/bulk-allocation/
+  // design.md §1 for the BATCH_SIZE = 16 derivation (HCU-bounded, not
+  // relayer-SDK-bounded). Small drops (≤ 5) keep the single-call path so
+  // trivial campaigns still spend exactly one popup per recipient with
+  // no batching overhead.
   const pending = ctx.recipients.filter(
     (r) => !ctx.alreadyAllocated?.has(r.address.toLowerCase()),
   );
@@ -310,14 +311,20 @@ async function fundCampaign(
   }
 }
 
-/** Maximum recipients per setAllocationsBatch call. The Zama relayer SDK
- * caps a single createEncryptedInput proof at 2048 bits / 64 bits per
- * uint64 = 32 values; the on-chain FHE.fromExternal verify gas (~500k
- * each) means a 32-recipient batch costs ~16M gas, comfortably under
- * the Sepolia 30M block limit. See openspec/changes/bulk-allocation/
- * design.md §1. Bumping this requires either an FHE protocol change or
- * an EVM block-gas regression — not a tunable. */
-const BATCH_SIZE = 32;
+/** Maximum recipients per setAllocationsBatch call. Three protocol-layer
+ * constraints stack here; the binding minimum wins:
+ *   1. FHEVM HCU (Homomorphic Computation Unit) per-tx budget — empirically
+ *      a batch of 32 reverts `HCUTransactionDepthLimitExceeded()` because
+ *      each `FHE.add(_runningTotal, amount)` consumes depth. Batch of 16
+ *      is the largest size validated on chain (test 4.x).
+ *   2. Zama relayer SDK input-proof packing — caps a single
+ *      `createEncryptedInput` proof at 2048 bits / 64 bits per uint64 =
+ *      32 values. NOT the binding constraint.
+ *   3. Sepolia 30M block gas — 16 × ~500k = ~8M, well under the limit.
+ * HCU is the binding constraint. See openspec/changes/bulk-allocation/
+ * design.md §1. Bumping this requires Zama protocol changes (HCU budget
+ * raise or FHE.add depth reduction), not a project-internal tunable. */
+const BATCH_SIZE = 16;
 
 /** Chunk a recipient list into ≤BATCH_SIZE groups and submit each as
  * one setAllocationsBatch tx. The whole batch shares a single relayer

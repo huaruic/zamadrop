@@ -419,6 +419,55 @@ describe("ZamaDropCampaign", function () {
       ).to.be.revertedWithCustomError(contract, "AlreadyFinalized");
     });
 
+    // Empirical HCU ceiling probe. FHEVM enforces a per-transaction
+    // Homomorphic Computation Unit budget (HCULimit.sol); each FHE.add
+    // in setAllocationsBatch's loop consumes some. The relayer-SDK
+    // packing limit (32 values per proof) is NOT the binding constraint
+    // for setAllocationsBatch — HCU is. This test pins the safe upper
+    // bound so future code changes (extra FHE ops in the loop) catch
+    // a regression.
+    //
+    // Empirically measured 2026-05-08: batch of 32 reverts
+    // HCUTransactionDepthLimitExceeded; batch of 16 is the largest size
+    // we've validated under the current FHE.add(_runningTotal, amount)
+    // pattern. Document this in AGENTS.md + design.md so the wizard's
+    // BATCH_SIZE constant matches what works on chain.
+    it("batch of 16 happy path + gas budget sanity (HCU-bound, not SDK-bound)", async function () {
+      const N = 16;
+      const recipientAddrs: string[] = [];
+      const amounts: bigint[] = [];
+      for (let i = 0; i < N; i++) {
+        recipientAddrs.push(ethers.Wallet.createRandom().address);
+        amounts.push(1n);
+      }
+
+      const { campaign, campaignAddress } = await deployCampaign({
+        admin,
+        auditor,
+        recipients: recipientAddrs,
+        declaredTotal: BigInt(N),
+      });
+
+      const { handles, proof } = await encryptAmountsBatch(
+        campaignAddress,
+        admin.address,
+        amounts
+      );
+
+      const tx = await campaign
+        .connect(admin)
+        .setAllocationsBatch(recipientAddrs, handles, proof);
+      const receipt = await tx.wait();
+
+      // Sanity: batch of 16 must fit comfortably under Sepolia 30M block
+      // limit. 16 × 500k ≈ 8M expected; 15M is a generous ceiling that
+      // catches future FHE-op gas regressions.
+      expect(receipt!.gasUsed).to.be.lessThan(15_000_000n);
+      expect(await campaign.allocationCount()).to.equal(BigInt(N));
+      expect(await campaign.allocationSet(recipientAddrs[0])).to.equal(true);
+      expect(await campaign.allocationSet(recipientAddrs[15])).to.equal(true);
+    });
+
     it("单调用 + batch 混用收敛: allocationCount 累加正确，finalize 通过", async function () {
       // 重新部署 3-recipient campaign
       const { campaign, campaignAddress } = await deployCampaign({

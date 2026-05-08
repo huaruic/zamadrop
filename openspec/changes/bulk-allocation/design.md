@@ -5,19 +5,45 @@
 | Choice | Decision | Rationale |
 |---|---|---|
 | Batch primitive | `setAllocationsBatch(address[], externalEuint64[], bytes)` | One proof covers all amounts in batch (relayer SDK packing) — 10x calldata savings vs N independent proofs |
-| Max batch size | **32 recipients per call** | Zama relayer SDK packing limit: `2048 bits / 64 bits per uint64 = 32`. Hard ceiling, not tunable. |
+| Max batch size | **16 recipients per call** | FHEVM HCU per-tx budget — `FHE.add(_runningTotal, amount)` in the loop consumes depth; batch of 32 reverts `HCUTransactionDepthLimitExceeded()` empirically. HCU is binding *below* the relayer-SDK packing limit (32) and the gas limit. Hard ceiling, not tunable. |
 | Atomicity on failure | Whole batch reverts on any per-recipient guard failure | Matches V7 single-call semantics; partial state is harder to reason about than retrying a clean batch |
 | Backwards compatibility | Keep `setAllocation` (single) intact | Admin tooling that fixes one allocation at a time still works; ABI addition only |
 | Frontend routing | `N ≤ 5` uses single, `N > 5` uses batch | Small batches save no popups; avoid unnecessary code path for trivial cases |
 
-## §1 — Why batch size 32 is hard, not soft
+## §1 — Why batch size 16 is hard, not soft
 
-Two protocol-layer constraints determine the ceiling. We don't get to
-pick a number; the math picks it for us.
+Three protocol-layer constraints stack here; the binding minimum wins.
+We don't get to pick a number; the math picks it for us.
 
-### Constraint 1: Zama relayer SDK input-proof packing
+### Constraint 1: FHEVM HCU per-tx budget ← binding
 
-From `node_modules/@zama-fhe/relayer-sdk/lib/web.js` (validated 2026-05-08):
+FHEVM enforces a **Homomorphic Computation Unit** depth limit per
+transaction (see `HCULimit.sol` in the runtime). Each FHE op consumes
+some HCU; once the budget runs out the tx reverts
+`HCUTransactionDepthLimitExceeded()`.
+
+In `setAllocationsBatch`'s loop body:
+
+```solidity
+euint64 amount = FHE.fromExternal(encAmounts[i], inputProof);
+_allocation[r] = amount;
+FHE.allowThis(_allocation[r]);
+FHE.allow(_allocation[r], r);
+_runningTotal = FHE.add(_runningTotal, amount);   // ← chained adds eat HCU
+FHE.allowThis(_runningTotal);
+```
+
+The `_runningTotal = FHE.add(_runningTotal, amount)` line creates a
+chain that grows linearly with batch size. Empirically validated
+2026-05-08: **batch of 32 reverts `HCUTransactionDepthLimitExceeded()`;
+batch of 16 succeeds**. Test pinned at
+`test/ZamaDropCampaign.test.ts` "batch of 16 happy path + gas budget
+sanity (HCU-bound, not SDK-bound)" so future loop changes that add FHE
+ops will catch a regression.
+
+### Constraint 2: Zama relayer SDK input-proof packing (NOT binding)
+
+From `node_modules/@zama-fhe/relayer-sdk/lib/web.js`:
 
 ```js
 if (bits.length + 1 > 256)
@@ -26,30 +52,34 @@ if (bits.reduce((acc, val) => acc + Math.max(2, val), 0) + added > 2048)
     throw 'Packing more than 2048 bits in a single input ciphertext is unsupported';
 ```
 
-`uint64 = 64 bits → 2048 / 64 = 32` is the binding limit. The 256-
-variable rule kicks in only for tiny types (bool/uint8 territory).
+`uint64 = 64 bits → 2048 / 64 = 32`. This is *higher* than the HCU
+ceiling, so it never bites for `setAllocationsBatch`. Listed here so a
+future change that drops HCU consumption (e.g., restructuring the
+running-total accumulation) can recognise the next ceiling up.
 
-### Constraint 2: Sepolia block gas budget
+### Constraint 3: Sepolia block gas budget (NOT binding)
 
 Each `FHE.fromExternal(handle, proof)` runs an on-chain ZK proof
 verification. Empirical cost: **~500k gas per recipient**.
 
 | Batch | Gas | Sepolia 30M block utilisation |
 |---|---|---|
-| 32 | 16M | 53% |
+| 16 | 8M | 27% |
+| 32 | 16M | 53% (only reachable if HCU lifts) |
 | 50 | 25M | 83% (no margin for spikes) |
 | 100 | 50M | exceeds block limit; unmineable |
 
-So **32 is also the gas ceiling**, with comfortable headroom for
-Sepolia base-fee spikes and any future FHE op gas regressions.
+Block gas would only become the binding constraint at batch ~50+, far
+beyond the HCU ceiling.
 
 ### Why "1 tx for N=100" is impossible regardless
 
 Even with smart-wallet (AA) bundling, the on-chain transactions
-themselves can't merge. 100 × 500k = 50M gas exceeds the 30M block
-limit. Multiple txs across multiple blocks are physically required for
-N > ~50. The smart-wallet layer reduces *signatures* to 1, not
-*transactions* to 1.
+themselves can't merge. The HCU budget is per-transaction, not
+per-call: bundling N internal calls into one UserOperation would still
+hit the same per-tx HCU ceiling. Multiple txs across multiple blocks
+are physically required for N > ~16. The smart-wallet layer reduces
+*signatures* to 1, not *transactions* to 1.
 
 ## §2 — Contract sketch
 
@@ -91,7 +121,7 @@ function signature changes to take arrays.
 ## §3 — Frontend chunking pattern
 
 ```ts
-const BATCH_SIZE = 32; // protocol-imposed, see Design §1
+const BATCH_SIZE = 16; // HCU-bounded; see Design §1
 
 async function setAllocationsBatched(ctx, campaignAddress, recipients) {
   const totalBatches = Math.ceil(recipients.length / BATCH_SIZE);
@@ -99,7 +129,7 @@ async function setAllocationsBatched(ctx, campaignAddress, recipients) {
     const chunk = recipients.slice(i, i + BATCH_SIZE);
     const batchIndex = Math.floor(i / BATCH_SIZE) + 1;
 
-    // Pack 1..32 amounts into a single proof.
+    // Pack 1..16 amounts into a single proof.
     const buffer = ctx.fhevm.createEncryptedInput(
       getAddress(campaignAddress),
       getAddress(ctx.adminAddress),
@@ -153,9 +183,9 @@ the contract's recipientCount limit.
   service dependencies, reminiscent of the executor daemon we just
   eliminated in ADR 0003. Want at least one product cycle of stable
   EOA-only operation first.
-- Gas-wise: doesn't reduce **transactions**, only signatures. The
-  block-gas math in §1 still requires ⌈N/32⌉ separate txs across
-  multiple blocks, taking ~3 min wall-clock for N=500. Smart wallet
+- HCU-wise: doesn't reduce **transactions**, only signatures. The
+  per-tx HCU budget from §1 still requires ⌈N/16⌉ separate txs across
+  multiple blocks, taking ~6 min wall-clock for N=500. Smart wallet
   hides the txs behind one popup but doesn't make them free.
 
 **Future**: revisit as a separate OpenSpec change once two conditions
@@ -221,10 +251,12 @@ No existing test should fail. Coverage target ≥ 90% maintained.
 
 | Wizard state | V7 (now) | After bulk-allocation |
 |---|---|---|
-| Step 5.3 in flight, N=100 | "23/100 encrypting…" then sign popup, 100 times | "Batch 3/4 (78/100 done)" then sign popup, 4 times |
-| Wallet popups for N=100 | 100 | 4 |
-| Wall-clock for Step 5.3, N=100 | ~3-4 min (admin reaction-time bound) | ~50 s |
+| Step 5.3 in flight, N=100 | "23/100 encrypting…" then sign popup, 100 times | "Batch 3/7 (48/100 done)" then sign popup, 7 times |
+| Wallet popups for N=100 | 100 | 7 |
+| Wall-clock for Step 5.3, N=100 | ~3-4 min (admin reaction-time bound) | ~90 s |
+| Wallet popups for N=500 | 500 (functionally undeployable) | 32 |
+| Wall-clock for Step 5.3, N=500 | "admin gives up" | ~6 min |
 | Resume after wizard refresh | Tracks per-recipient via `allocatedSoFar` | Same — chunking pre-filters completed |
-| Demo failure mode | "Admin gives up" | "Admin clicks Confirm 4 times" |
+| Demo failure mode | "Admin gives up" | "Admin clicks Confirm 7 times for N=100" |
 
 The change is product-defining for the 100-500 recipient sweet spot.

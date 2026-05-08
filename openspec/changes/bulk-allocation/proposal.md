@@ -22,19 +22,20 @@ optimization.
 ## What changes
 
 Add `setAllocationsBatch(address[], externalEuint64[], bytes)` to the
-campaign contract. Admin packs up to **32 recipients per call** (the
-hard ceiling imposed by the Zama relayer SDK's input-proof packing
-limit, see Design §1). Frontend wizard Step 5.3 chunks the recipient
-list into batches of 32 and submits one tx per chunk.
+campaign contract. Admin packs up to **16 recipients per call** (the
+hard ceiling imposed by the FHEVM HCU per-tx budget — `FHE.add` in the
+loop body chains depth and trips `HCUTransactionDepthLimitExceeded()`
+beyond ~16; see Design §1). Frontend wizard Step 5.3 chunks the
+recipient list into batches of 16 and submits one tx per chunk.
 
 Result:
 
 | Recipients (N) | Wallet popups (after) | Wall-clock |
 |---|---|---|
 | 5 | 1 | ~10 s |
-| 50 | 2 | ~30 s |
-| 100 | 4 | ~50 s |
-| **500** | **16** | **~3 min** |
+| 50 | 4 | ~50 s |
+| 100 | 7 | ~90 s |
+| **500** | **32** | **~6 min** |
 
 Strictly additive. The single-recipient `setAllocation` stays for
 admin tooling that needs to fix one allocation at a time.
