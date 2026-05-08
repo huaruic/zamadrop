@@ -57,10 +57,17 @@ FHE.add / FHE.eq / FHE.allow / FHE.allowThis / FHE.fromExternal
 
 ## 关键不变量（改合约前必读）
 
-1. **Allocations 只能设置一次** — `setAllocation` 对同一 recipient 调用两次会 revert
+1. **Allocations 只能设置一次** — `setAllocation` / `setAllocationsBatch` 对同一 recipient 设置两次都会 revert（共用 `allocationSet[]` flag）
 2. **`claim()` 是原子的** — 先设 `claimed[addr] = true` 再转账，任意一步 revert 会回滚整个调用
 3. **`claimedTotal` 只在 `claim()` 中更新** — 其他地方不会更新
-4. **KMS 验证用 active pull,不要被动等 Gateway push** — finalize() 会
+4. **`setAllocationsBatch` 单批上限 = 32 recipients,不是合约层守卫** — Zama
+   relayer SDK `createEncryptedInput().add64(...)` 限制单 proof 最多 32 个
+   uint64（2048 bits / 64 bits）。客户端在第 33 个 add64 抛错。合约本身可
+   接受任意长度 array,但 frontend / CLI 必须切片到 ≤ 32。Sepolia 30M block
+   gas 限制在 32 × 500k ≈ 16M 处也留足空间。**这是协议层硬限,不是可调
+   常量** — 想 bump 必须 Zama 改 SDK + EVM block gas 上调,不是项目内决策。
+
+5. **KMS 验证用 active pull,不要被动等 Gateway push** — finalize() 会
    把加密的 sumCheck handle 标记为 publicly decryptable 并存到
    `finalizeCheckHandle`。任何代码（包括 wizard frontend）都应该用
    relayer SDK `publicDecrypt(handles)` 主动询问 Gateway 拿到 threshold

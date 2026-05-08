@@ -32,6 +32,8 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
     error NotClaimed();
     error AlreadyTransferred();
     error AmountMismatch();
+    // bulk-allocation: arrays passed to setAllocationsBatch must agree.
+    error ArrayLengthMismatch();
     // V7 invariants (constructor + state machine + escrow)
     error HashMismatch();
     error CountMismatch();
@@ -173,6 +175,62 @@ contract ZamaDropCampaign is ZamaEthereumConfig {
         // V7: bump after the dedupe flag so a revert above does not increment.
         allocationCount += 1;
         emit AllocationSet(recipient);
+    }
+
+    /**
+     * @notice Admin 批量为多个受益人设置加密 allocation。同一个 inputProof
+     *         覆盖批内所有 amounts（relayer SDK 把 N 个 add64 调用打到一个
+     *         proof 里）。每个 recipient 的处理与 setAllocation 完全等价：
+     *         dedupe → fromExternal → store → ACL → runningTotal 累加 → emit。
+     *
+     *         批内任一 recipient 已被 set 或 array 长度对不上，整笔交易
+     *         revert（atomic 语义，避免 partial state）。
+     *
+     *         批的实际上限由两条协议层约束决定，**不是合约层守卫**：
+     *           1. Zama relayer SDK packing limit：单个 proof 最多 32 个
+     *              uint64 amounts（2048 bits / 64 bits），客户端
+     *              `createEncryptedInput().add64(...).encrypt()` 在第 33
+     *              个 add64 时抛错
+     *           2. 区块 gas 上限：每个 FHE.fromExternal verify ~500k gas，
+     *              单批 32 个 ≈ 16M gas（Sepolia 30M block 53% 占用）
+     *
+     *         合约本身可接受任意长度 array；调用端负责切片到 ≤ 32。
+     *
+     * @param recipients   批内每个受益人地址（顺序与 encAmounts 对齐）
+     * @param encAmounts   来自客户端 fhevmjs 同一次 createEncryptedInput
+     *                     生成的多个 externalEuint64 handles
+     * @param inputProof   覆盖整批 amounts 的 KMS-verified proof（共享）
+     */
+    function setAllocationsBatch(
+        address[] calldata recipients,
+        externalEuint64[] calldata encAmounts,
+        bytes calldata inputProof
+    ) external {
+        if (msg.sender != admin) revert NotAdmin();
+        if (state == State.Finalizing || state == State.Claiming) revert AlreadyFinalized();
+        if (state != State.Setup) revert NotSetup();
+        if (recipients.length != encAmounts.length) revert ArrayLengthMismatch();
+
+        for (uint256 i = 0; i < recipients.length; i++) {
+            address recipient = recipients[i];
+            if (allocationSet[recipient]) revert AllocationAlreadySet();
+
+            // 同一个 inputProof verify 第 i 个 handle。relayer SDK 把整批
+            // amounts 打到这一个 proof 里，每次 fromExternal 校验对应 handle
+            // 即可，无需多份 proof。
+            euint64 amount = FHE.fromExternal(encAmounts[i], inputProof);
+
+            _allocation[recipient] = amount;
+            FHE.allowThis(_allocation[recipient]);
+            FHE.allow(_allocation[recipient], recipient);
+
+            _runningTotal = FHE.add(_runningTotal, amount);
+            FHE.allowThis(_runningTotal);
+
+            allocationSet[recipient] = true;
+            allocationCount += 1;
+            emit AllocationSet(recipient);
+        }
     }
 
     // ─────────────────────────────────────────────

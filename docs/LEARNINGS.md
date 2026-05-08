@@ -2,6 +2,31 @@
 
 This file records debugging conclusions and project lessons that future agents should not rediscover from scratch. Keep entries short and factual. If an entry becomes a long-lived architectural rule, promote it to an ADR or `AGENTS.md`.
 
+## bulk-allocation batch ceiling = 32 (2026-05-08)
+
+### What
+
+`setAllocationsBatch` packs up to 32 recipients per call. This is **not a number we picked** — it's the binding minimum of two protocol-layer constraints:
+
+1. **Zama relayer SDK input-proof packing**: `createEncryptedInput()` rejects more than 2048 bits of packed values per proof (`node_modules/@zama-fhe/relayer-sdk/lib/web.js`). For uint64 amounts: `2048 / 64 = 32`.
+2. **Sepolia block gas budget**: each `FHE.fromExternal` verify costs ~500k gas. A 32-recipient batch is ~16M gas (53% of 30M block limit). 50+ recipients per batch would exceed the block.
+
+The Solidity contract accepts arbitrarily-sized arrays; the limit is enforced upstream by relayer SDK. Bumping it requires Zama protocol change OR EVM block-gas regression — not a project-internal tunable.
+
+### Why this matters for product
+
+For N=500 recipient drops (the stated target market), batching collapses 500 wallet popups → 16 popups (~3 minutes wall-clock, mostly waiting for confirmations between txs). Without batching, N>50 drops are functionally undeployable on EOA wallets.
+
+### Rejected: smart-wallet "1 popup" UX in same iteration
+
+Smart wallet (EIP-4337 / EIP-7702) can collapse the 16 batches into a single UserOperation = 1 admin signature. Deferred because:
+- 2-3 weeks integration work (bundler + paymaster)
+- Smart-wallet adoption among campaign operators / payroll admins still niche
+- Doesn't reduce *transactions*, only signatures — 16 on-chain txs across multiple blocks are still required by gas math
+- Re-introduces off-chain service dependency (bundler) which we just eliminated in ADR 0003
+
+Full rejected-alternatives analysis lives in `openspec/changes/bulk-allocation/design.md §4`. Revisit when smart-wallet adoption in target persona crosses ~30%.
+
 ## V7 wizard 5.5 — passive Gateway-push to active relayer pull (2026-05-08)
 
 ### Symptom

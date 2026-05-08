@@ -28,6 +28,12 @@ export const CAMPAIGN_ABI = [
   // 写入函数
   { type: "function", name: "setAllocation", stateMutability: "nonpayable",
     inputs: [{ type: "address", name: "recipient" }, { type: "bytes32", name: "encAmount" }, { type: "bytes", name: "inputProof" }], outputs: [] },
+  { type: "function", name: "setAllocationsBatch", stateMutability: "nonpayable",
+    inputs: [
+      { type: "address[]", name: "recipients" },
+      { type: "bytes32[]", name: "encAmounts" },
+      { type: "bytes", name: "inputProof" },
+    ], outputs: [] },
   { type: "function", name: "finalize", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "callbackFinalize", stateMutability: "nonpayable",
     inputs: [{ type: "bool", name: "result" }, { type: "bytes", name: "decryptionProof" }], outputs: [] },
