@@ -17,8 +17,20 @@ import {
 } from "@/components/ui/card";
 import { ETHERSCAN_BASE } from "@/config";
 import { formatTokenAmount } from "@/hooks/useTokenMeta";
+import { parseContractRevert } from "@/lib/revert-reason";
 
 import { shortHash } from "./shortAddr";
+
+// "gas limit too high" is the Sepolia RPC fallback话术 when cancelCampaign
+// reverts without a decoded reason — in this contract it's almost always the
+// NotFailed precondition. Map both to the same human-readable copy so users
+// don't get sent debugging gas budgets.
+const CANCEL_REVERT_MAP = {
+  "gas limit too high":
+    "Campaign is not in Failed state. cancelCampaign only works after KMS reports a sum mismatch. Refresh the page and verify the campaign's current state.",
+  NotFailed:
+    "Campaign is not in Failed state. cancelCampaign only works after KMS reports a sum mismatch. Refresh the page and verify the campaign's current state.",
+};
 
 interface CancelCampaignFormProps {
   campaignAddress: `0x${string}`;
@@ -100,7 +112,7 @@ export function CancelCampaignForm({
       });
     } catch (err) {
       setStage("idle");
-      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setErrorMsg(parseContractRevert(err, CANCEL_REVERT_MAP));
     }
   }
 
