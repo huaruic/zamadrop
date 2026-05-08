@@ -15,6 +15,20 @@ async function encryptAmount(
   return { handle: encrypted.handles[0], proof: encrypted.inputProof };
 }
 
+// bulk-allocation 测试辅助：把 N 个 uint64 amount 打包成同一个 input proof，
+// 模拟前端 wizard 走 setAllocationsBatch 时 relayer SDK 对单批 ≤32 amounts
+// 共享一个 proof 的行为。
+async function encryptAmountsBatch(
+  contractAddress: string,
+  senderAddress: string,
+  values: bigint[]
+): Promise<{ handles: string[]; proof: Uint8Array }> {
+  const input = hre.fhevm.createEncryptedInput(contractAddress, senderAddress);
+  for (const v of values) input.add64(v);
+  const encrypted = await input.encrypt();
+  return { handles: encrypted.handles, proof: encrypted.inputProof };
+}
+
 // publicDecrypt + KMS proof helper. KMS 改造后 callbackFinalize / executeTransfer
 // 需要 decryptionProof 参数；mock-utils 在 hardhat 环境下会自动生成有效签名。
 async function publicDecryptWithProof(handle: string): Promise<{
@@ -272,6 +286,219 @@ describe("ZamaDropCampaign", function () {
       await expect(
         contract.connect(admin).setAllocation(other.address, h3, p3)
       ).to.be.revertedWithCustomError(contract, "AlreadyFinalized");
+    });
+  });
+
+  // ─────────────────────────────────────────────
+  // setAllocationsBatch — bulk-allocation
+  // ─────────────────────────────────────────────
+  describe("setAllocationsBatch", function () {
+    it("batch of 2 happy path: state、allocationCount、events 与 single-call 等价", async function () {
+      const { handles, proof } = await encryptAmountsBatch(
+        contractAddress,
+        admin.address,
+        [ALLOC_1, ALLOC_2]
+      );
+
+      const tx = await contract
+        .connect(admin)
+        .setAllocationsBatch([recipient1.address, recipient2.address], handles, proof);
+      const receipt = await tx.wait();
+
+      expect(await contract.allocationCount()).to.equal(2n);
+      expect(await contract.allocationSet(recipient1.address)).to.equal(true);
+      expect(await contract.allocationSet(recipient2.address)).to.equal(true);
+
+      // 每个 recipient 都该 emit 一次 AllocationSet
+      const allocEvents = receipt!.logs.filter(
+        (log: { topics: ReadonlyArray<string> }) =>
+          log.topics[0] === contract.interface.getEvent("AllocationSet")!.topicHash
+      );
+      expect(allocEvents.length).to.equal(2);
+
+      // 后续 finalize 应该过 — 状态跟单调用路径完全一致
+      await tokenContract
+        .connect(admin)
+        .transfer(contractAddress, DECLARED_TOTAL - DECLARED_TOTAL); // already funded by deployCampaign
+      await expect(contract.connect(admin).finalize()).to.not.be.reverted;
+    });
+
+    it("非 Admin 调用 setAllocationsBatch 应 revert NotAdmin", async function () {
+      const { handles, proof } = await encryptAmountsBatch(
+        contractAddress,
+        other.address,
+        [ALLOC_1, ALLOC_2]
+      );
+      await expect(
+        contract
+          .connect(other)
+          .setAllocationsBatch([recipient1.address, recipient2.address], handles, proof)
+      ).to.be.revertedWithCustomError(contract, "NotAdmin");
+    });
+
+    it("array 长度对不上应 revert ArrayLengthMismatch", async function () {
+      const { handles, proof } = await encryptAmountsBatch(
+        contractAddress,
+        admin.address,
+        [ALLOC_1, ALLOC_2]
+      );
+      // 3 个 recipients vs 2 个 handles
+      await expect(
+        contract
+          .connect(admin)
+          .setAllocationsBatch(
+            [recipient1.address, recipient2.address, other.address],
+            handles,
+            proof
+          )
+      ).to.be.revertedWithCustomError(contract, "ArrayLengthMismatch");
+    });
+
+    it("批内 recipient 重复应 revert AllocationAlreadySet", async function () {
+      // 重新部署一个 3-recipient campaign 才能测批内重复
+      const { campaign, campaignAddress } = await deployCampaign({
+        admin,
+        auditor,
+        recipients: [recipient1.address, recipient2.address, other.address],
+        declaredTotal: DECLARED_TOTAL,
+      });
+      const { handles, proof } = await encryptAmountsBatch(
+        campaignAddress,
+        admin.address,
+        [ALLOC_1, ALLOC_2, 100n]
+      );
+      // recipient1 出现两次（位置 0 和 2）
+      await expect(
+        campaign
+          .connect(admin)
+          .setAllocationsBatch(
+            [recipient1.address, recipient2.address, recipient1.address],
+            handles,
+            proof
+          )
+      ).to.be.revertedWithCustomError(campaign, "AllocationAlreadySet");
+    });
+
+    it("recipient 已被先前调用 set 过，再 batch 包含同一 recipient 应 revert", async function () {
+      // 先 single-call 给 recipient1
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      expect(await contract.allocationSet(recipient1.address)).to.equal(true);
+
+      // 再 batch 含 recipient1 + recipient2
+      const { handles, proof } = await encryptAmountsBatch(
+        contractAddress,
+        admin.address,
+        [ALLOC_1, ALLOC_2]
+      );
+      await expect(
+        contract
+          .connect(admin)
+          .setAllocationsBatch([recipient1.address, recipient2.address], handles, proof)
+      ).to.be.revertedWithCustomError(contract, "AllocationAlreadySet");
+
+      // recipient2 不应被部分写入（atomic）
+      expect(await contract.allocationSet(recipient2.address)).to.equal(false);
+    });
+
+    it("Finalizing 状态下 setAllocationsBatch 应 revert AlreadyFinalized", async function () {
+      // 走完 setAllocation × 2 + finalize（state 进 Finalizing）
+      const { handle: h1, proof: p1 } = await encryptAmount(contractAddress, admin.address, ALLOC_1);
+      await contract.connect(admin).setAllocation(recipient1.address, h1, p1);
+      const { handle: h2, proof: p2 } = await encryptAmount(contractAddress, admin.address, ALLOC_2);
+      await contract.connect(admin).setAllocation(recipient2.address, h2, p2);
+      await contract.connect(admin).finalize(); // → Finalizing
+
+      const { handles, proof } = await encryptAmountsBatch(
+        contractAddress,
+        admin.address,
+        [50n]
+      );
+      await expect(
+        contract.connect(admin).setAllocationsBatch([other.address], handles, proof)
+      ).to.be.revertedWithCustomError(contract, "AlreadyFinalized");
+    });
+
+    // Empirical HCU ceiling probe. FHEVM enforces a per-transaction
+    // Homomorphic Computation Unit budget (HCULimit.sol); each FHE.add
+    // in setAllocationsBatch's loop consumes some. The relayer-SDK
+    // packing limit (32 values per proof) is NOT the binding constraint
+    // for setAllocationsBatch — HCU is. This test pins the safe upper
+    // bound so future code changes (extra FHE ops in the loop) catch
+    // a regression.
+    //
+    // Empirically measured 2026-05-08: batch of 32 reverts
+    // HCUTransactionDepthLimitExceeded; batch of 16 is the largest size
+    // we've validated under the current FHE.add(_runningTotal, amount)
+    // pattern. Document this in AGENTS.md + design.md so the wizard's
+    // BATCH_SIZE constant matches what works on chain.
+    it("batch of 16 happy path + gas budget sanity (HCU-bound, not SDK-bound)", async function () {
+      const N = 16;
+      const recipientAddrs: string[] = [];
+      const amounts: bigint[] = [];
+      for (let i = 0; i < N; i++) {
+        recipientAddrs.push(ethers.Wallet.createRandom().address);
+        amounts.push(1n);
+      }
+
+      const { campaign, campaignAddress } = await deployCampaign({
+        admin,
+        auditor,
+        recipients: recipientAddrs,
+        declaredTotal: BigInt(N),
+      });
+
+      const { handles, proof } = await encryptAmountsBatch(
+        campaignAddress,
+        admin.address,
+        amounts
+      );
+
+      const tx = await campaign
+        .connect(admin)
+        .setAllocationsBatch(recipientAddrs, handles, proof);
+      const receipt = await tx.wait();
+
+      // Sanity: batch of 16 must fit comfortably under Sepolia 30M block
+      // limit. 16 × 500k ≈ 8M expected; 15M is a generous ceiling that
+      // catches future FHE-op gas regressions.
+      expect(receipt!.gasUsed).to.be.lessThan(15_000_000n);
+      expect(await campaign.allocationCount()).to.equal(BigInt(N));
+      expect(await campaign.allocationSet(recipientAddrs[0])).to.equal(true);
+      expect(await campaign.allocationSet(recipientAddrs[15])).to.equal(true);
+    });
+
+    it("单调用 + batch 混用收敛: allocationCount 累加正确，finalize 通过", async function () {
+      // 重新部署 3-recipient campaign
+      const { campaign, campaignAddress } = await deployCampaign({
+        admin,
+        auditor,
+        recipients: [recipient1.address, recipient2.address, other.address],
+        declaredTotal: 1000n,
+      });
+
+      // 先 single-call recipient1 = 300
+      const { handle, proof } = await encryptAmount(campaignAddress, admin.address, 300n);
+      await campaign.connect(admin).setAllocation(recipient1.address, handle, proof);
+      expect(await campaign.allocationCount()).to.equal(1n);
+
+      // 再 batch [recipient2, other] = [400, 300]，总和 = 1000 = declaredTotal
+      const { handles: bh, proof: bp } = await encryptAmountsBatch(
+        campaignAddress,
+        admin.address,
+        [400n, 300n]
+      );
+      await campaign
+        .connect(admin)
+        .setAllocationsBatch([recipient2.address, other.address], bh, bp);
+
+      expect(await campaign.allocationCount()).to.equal(3n);
+      expect(await campaign.allocationSet(recipient1.address)).to.equal(true);
+      expect(await campaign.allocationSet(recipient2.address)).to.equal(true);
+      expect(await campaign.allocationSet(other.address)).to.equal(true);
+
+      // finalize 应该过（count + 总额都对得上）
+      await expect(campaign.connect(admin).finalize()).to.not.be.reverted;
     });
   });
 

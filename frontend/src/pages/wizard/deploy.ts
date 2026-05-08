@@ -143,18 +143,36 @@ export async function executeDeployment(
   ctx.onProgress(2, "Funded.");
 
   // ── 5.3 setAllocation × N ─────────────────────────────────────────
-  const N = ctx.recipients.length;
-  for (let i = 0; i < N; i++) {
-    const r = ctx.recipients[i];
-    const label = `${i + 1}/${N}`;
-    if (ctx.alreadyAllocated?.has(r.address.toLowerCase())) {
-      ctx.onProgress(3, `${label} (already allocated, skipped)`);
-      continue;
+  // Drops with N > 5 use the batched primitive (setAllocationsBatch) to
+  // collapse N wallet signatures into ⌈N / BATCH_SIZE⌉ — for N=500, this
+  // is 32 popups instead of 500. See openspec/changes/bulk-allocation/
+  // design.md §1 for the BATCH_SIZE = 16 derivation (HCU-bounded, not
+  // relayer-SDK-bounded). Small drops (≤ 5) keep the single-call path so
+  // trivial campaigns still spend exactly one popup per recipient with
+  // no batching overhead.
+  const pending = ctx.recipients.filter(
+    (r) => !ctx.alreadyAllocated?.has(r.address.toLowerCase()),
+  );
+  const totalToWrite = pending.length;
+  const totalRecipients = ctx.recipients.length;
+  const skipped = totalRecipients - totalToWrite;
+  if (skipped > 0) {
+    ctx.onProgress(3, `${skipped} already allocated, skipping`);
+  }
+  if (totalToWrite === 0) {
+    ctx.onProgress(3, `${totalRecipients}/${totalRecipients} done (resumed)`);
+  } else if (totalToWrite <= 5) {
+    let written = 0;
+    for (const r of pending) {
+      const label = `${written + 1}/${totalToWrite}`;
+      ctx.onProgress(3, `${label} encrypting…`);
+      await setOneAllocation(ctx, campaignAddress, r, label);
+      ctx.onAllocated(r.address);
+      written += 1;
+      ctx.onProgress(3, `${label} done`);
     }
-    ctx.onProgress(3, `${label} encrypting…`);
-    await setOneAllocation(ctx, campaignAddress, r, label);
-    ctx.onAllocated(r.address);
-    ctx.onProgress(3, `${label} done`);
+  } else {
+    await setAllocationsBatched(ctx, campaignAddress, pending);
   }
 
   // ── 5.4 finalize ──────────────────────────────────────────────────
@@ -289,6 +307,92 @@ async function fundCampaign(
   if (bal < ctx.snapshot.declaredTotal) {
     throw new Error(
       `Funding mismatch: campaign balance ${bal} < declared ${ctx.snapshot.declaredTotal}`,
+    );
+  }
+}
+
+/** Maximum recipients per setAllocationsBatch call. Three protocol-layer
+ * constraints stack here; the binding minimum wins:
+ *   1. FHEVM HCU (Homomorphic Computation Unit) per-tx budget — empirically
+ *      a batch of 32 reverts `HCUTransactionDepthLimitExceeded()` because
+ *      each `FHE.add(_runningTotal, amount)` consumes depth. Batch of 16
+ *      is the largest size validated on chain (test 4.x).
+ *   2. Zama relayer SDK input-proof packing — caps a single
+ *      `createEncryptedInput` proof at 2048 bits / 64 bits per uint64 =
+ *      32 values. NOT the binding constraint.
+ *   3. Sepolia 30M block gas — 16 × ~500k = ~8M, well under the limit.
+ * HCU is the binding constraint. See openspec/changes/bulk-allocation/
+ * design.md §1. Bumping this requires Zama protocol changes (HCU budget
+ * raise or FHE.add depth reduction), not a project-internal tunable. */
+const BATCH_SIZE = 16;
+
+/** Chunk a recipient list into ≤BATCH_SIZE groups and submit each as
+ * one setAllocationsBatch tx. The whole batch shares a single relayer
+ * SDK proof (every add64 in the same createEncryptedInput call goes
+ * into the same inputProof). Caller-side resume support: pass the
+ * already-completed recipients out via ctx.alreadyAllocated; this
+ * function operates on the filtered "still-needed" list. */
+async function setAllocationsBatched(
+  ctx: DeployContext,
+  campaignAddress: Address,
+  pending: Recipient[],
+): Promise<void> {
+  const totalBatches = Math.ceil(pending.length / BATCH_SIZE);
+  let written = 0;
+  for (let i = 0; i < pending.length; i += BATCH_SIZE) {
+    const chunk = pending.slice(i, i + BATCH_SIZE);
+    const batchIndex = Math.floor(i / BATCH_SIZE) + 1;
+    const batchLabel = `batch ${batchIndex}/${totalBatches}`;
+
+    ctx.onProgress(
+      3,
+      `${batchLabel} encrypting ${chunk.length} amounts…`,
+    );
+
+    // Pack all amounts in this chunk into a single relayer SDK input
+    // proof. Each add64 contributes one handle to ciphertexts.handles[],
+    // and ciphertexts.inputProof covers them all together. The contract
+    // re-uses this same proof for every FHE.fromExternal call in the
+    // loop body — no duplication on chain.
+    const buffer = ctx.fhevm.createEncryptedInput(
+      getAddress(campaignAddress),
+      getAddress(ctx.adminAddress),
+    );
+    for (const r of chunk) buffer.add64(r.amount);
+    const ciphertexts = await buffer.encrypt();
+    const handles = ciphertexts.handles.map((h: Uint8Array | string) =>
+      toHex(h),
+    );
+    const proof = toHex(ciphertexts.inputProof);
+
+    ctx.onProgress(3, `${batchLabel} awaiting wallet signature…`, {
+      phase: "awaiting_signature",
+    });
+    const hash = await ctx.walletClient.writeContract({
+      abi: CAMPAIGN_ABI,
+      address: campaignAddress,
+      functionName: "setAllocationsBatch",
+      args: [chunk.map((r) => r.address), handles, proof],
+      account: ctx.adminAddress,
+      chain: ctx.walletClient.chain,
+    });
+    ctx.onProgress(3, `${batchLabel} tx submitted…`, {
+      phase: "tx_submitted",
+      txHash: hash,
+    });
+    ctx.onProgress(3, `${batchLabel} confirming on chain…`, {
+      phase: "tx_confirming",
+      txHash: hash,
+    });
+    await ctx.publicClient.waitForTransactionReceipt({ hash });
+
+    // Mark every recipient in this chunk as allocated only after the
+    // tx confirms — atomicity matches the contract's loop semantics.
+    for (const r of chunk) ctx.onAllocated(r.address);
+    written += chunk.length;
+    ctx.onProgress(
+      3,
+      `${written}/${pending.length} done (${batchLabel})`,
     );
   }
 }

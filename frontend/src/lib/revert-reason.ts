@@ -20,6 +20,10 @@ const KNOWN_PATTERNS: Record<string, string> = {
   NotSetup:
     "Campaign is no longer in Setup — allocations are locked.",
   NotFinalizing: "Campaign is not awaiting KMS verification.",
+  AllocationAlreadySet:
+    "One of the recipients in this batch already has an allocation. Remove the duplicate and resubmit.",
+  ArrayLengthMismatch:
+    "Recipient count and amount count don't match — please retry; this is usually a stale wizard state.",
   "User rejected": "Wallet signature was rejected.",
   "user rejected": "Wallet signature was rejected.",
 };

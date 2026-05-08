@@ -2,6 +2,32 @@
 
 This file records debugging conclusions and project lessons that future agents should not rediscover from scratch. Keep entries short and factual. If an entry becomes a long-lived architectural rule, promote it to an ADR or `AGENTS.md`.
 
+## bulk-allocation batch ceiling = 16 (HCU-bound, 2026-05-08)
+
+### What
+
+`setAllocationsBatch` packs up to 16 recipients per call. This is **not a number we picked** — it's the binding minimum of three protocol-layer constraints:
+
+1. **FHEVM HCU (Homomorphic Computation Unit) per-tx budget** ← binding constraint. The loop body's `FHE.add(_runningTotal, amount)` consumes computation depth tracked by `HCULimit.sol`. Batches of 32 revert `HCUTransactionDepthLimitExceeded()` (empirically verified 2026-05-08). Batch of 16 is the largest size validated under the current FHE op pattern.
+2. **Zama relayer SDK input-proof packing**: `createEncryptedInput()` rejects more than 2048 bits of packed values per proof (`node_modules/@zama-fhe/relayer-sdk/lib/web.js`). For uint64 amounts: `2048 / 64 = 32`. NOT binding here — HCU bites first.
+3. **Sepolia block gas budget**: each `FHE.fromExternal` verify costs ~500k gas. A 16-recipient batch is ~8M gas (27% of 30M block limit). Plenty of margin.
+
+The Solidity contract accepts arbitrarily-sized arrays; the limit is enforced upstream by client-side chunking (frontend wizard, CLI scripts). Bumping it requires either Zama raising the HCU budget or restructuring the loop to reduce FHE op depth — not a project-internal tunable.
+
+### Why this matters for product
+
+For N=500 recipient drops (the stated target market), batching collapses 500 wallet popups → ⌈500/16⌉ = 32 popups (~6 minutes wall-clock, mostly waiting for confirmations between txs). Without batching, N>50 drops are functionally undeployable on EOA wallets — 32 popups is annoying but completable; 500 popups is not.
+
+### Rejected: smart-wallet "1 popup" UX in same iteration
+
+Smart wallet (EIP-4337 / EIP-7702) can collapse the 16 batches into a single UserOperation = 1 admin signature. Deferred because:
+- 2-3 weeks integration work (bundler + paymaster)
+- Smart-wallet adoption among campaign operators / payroll admins still niche
+- Doesn't reduce *transactions*, only signatures — 32 on-chain txs across multiple blocks are still required by HCU + gas math (N=500 case)
+- Re-introduces off-chain service dependency (bundler) which we just eliminated in ADR 0003
+
+Full rejected-alternatives analysis lives in `openspec/changes/bulk-allocation/design.md §4`. Revisit when smart-wallet adoption in target persona crosses ~30%.
+
 ## V7 wizard 5.5 — passive Gateway-push to active relayer pull (2026-05-08)
 
 ### Symptom

@@ -279,6 +279,20 @@ await campaign.write.executeTransfer([user, amount, proof]);
 
 ---
 
+## 8.5 setAllocationsBatch — 16 recipients per call is a protocol bound, not a config
+
+`setAllocationsBatch(address[], externalEuint64[], bytes)` accepts batches of up to 16 recipients per transaction. This ceiling is **not a tunable knob** — it's the binding minimum of three protocol-layer constraints:
+
+1. **FHEVM HCU per-tx budget** ← binding. The loop body's `FHE.add(_runningTotal, amount)` consumes Homomorphic Computation Unit depth tracked by `HCULimit.sol`. Empirically validated 2026-05-08: batch of 32 reverts `HCUTransactionDepthLimitExceeded()`; batch of 16 succeeds. The test in `test/ZamaDropCampaign.test.ts` ("batch of 16 happy path + gas budget sanity (HCU-bound, not SDK-bound)") pins this so a future loop change adding FHE ops catches a regression.
+2. **Zama relayer SDK input-proof packing**: a single `createEncryptedInput` proof can hold ≤ 2048 bits of packed values. For uint64 amounts: `2048 / 64 = 32`. *Not* binding — HCU bites first.
+3. **EVM block gas**: each `FHE.fromExternal` proof verify costs ~500k gas. A 16-recipient batch is ~8M gas (27% of Sepolia's 30M block limit). Plenty of margin; not binding.
+
+The Solidity contract intentionally accepts arbitrary-length arrays without imposing a numeric cap — bumping the limit is a Zama-protocol upgrade (HCU budget raise or FHE op restructuring), not a project-internal change. Client tooling (frontend wizard, CLI scripts) chunks lists to ≤16 before submission.
+
+For drops with N > 16 recipients, the wizard sends `⌈N / 16⌉` separate transactions. Even with smart-wallet bundling (deferred to a future iteration; see `openspec/changes/bulk-allocation/design.md §4.1`), the *transactions* remain physically separate because HCU is per-tx, not per-call — only the admin-side *signature count* drops to 1 in that future model.
+
+---
+
 ## 9. Out of Scope
 
 明确**不**在 ZamaDrop v0.x 范围，也不在 v1 roadmap 上的：
