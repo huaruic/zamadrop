@@ -4,6 +4,25 @@ This file is for short-term handoff context. Keep it current, concise, and biase
 
 Do not duplicate OpenSpec tasks here. `openspec/changes/*/tasks.md` remains the source of truth for implementation checklists.
 
+## 2026-05-08
+
+### Active change
+
+`openspec/changes/home-three-section-ia` — branch `feature/check-ui`
+
+### Outcome
+
+Frontend Home + CampaignCard refactored to three-section IA per the proposal. Educational modules (Entry points, Overview metrics, sidebar InfoCards) removed from app home — that responsibility now lives on the `zamadrop.xyz` landing page. Status filter switched from contract state-machine terms (`Setup`/`Finalize-pending`/`Claiming`) to user-facing `All`/`Live`/`Closed` via the new `frontend/src/lib/phase.ts` mapping (kept internal phase type intact). CampaignCard now leads with status + privacy badges, then declared total + recipients, then a `Your role` row (recipient identity comes from the existing `allocationSet(addr)` view inside `useRoleInfo`, no new on-chain reads), with admin/auditor/token demoted to grey footnote. Empty state now distinguishes truly empty `CAMPAIGNS` (`Create the first campaign` CTA) from filter-empty (`Clear filters` CTA). Connect-wallet logic factored into `frontend/src/lib/use-connect-wallet.ts` so `Home.startCampaign` and `CampaignCard.YourRoleRow` share one path.
+
+Verification: `npm run lint` (no new errors; 6 pre-existing errors in `badge.tsx` / `button.tsx` / `fhevm.ts` untouched), `npm run build` green, `npx vitest run` 33/33 pass (9 new in `lib/phase.test.ts`), `openspec validate home-three-section-ia --type change` valid. Browser-level QA deferred to next handoff.
+
+### P1 backlog (split from this change)
+
+- TopBar shows `Create campaign` even when wallet not yet connected
+- Contextual disclosure (claim / audit / wizard pages) for FHE privacy boundary, replacing the removed home sidebar
+- User-intent filters (`My access` / `Created by me` / `Auditor access`) — pending FHE recipient-list privacy decision
+- Visual system pass (card density, footer cleanup, etc.) — explicitly out of scope here
+
 ## 2026-05-07 (Wave 1 of ship session)
 
 ### Active Change

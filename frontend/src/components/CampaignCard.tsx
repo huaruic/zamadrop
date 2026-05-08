@@ -1,24 +1,27 @@
+import { Link } from "react-router-dom";
 import { useAccount, useReadContract, useReadContracts } from "wagmi";
 
 import { CAMPAIGN_ABI, ERC20_ABI } from "@/abis";
 import { ETHERSCAN_BASE } from "@/config";
+import {
+  derivePhase,
+  phaseBadgeVariant,
+  phaseLabel,
+} from "@/lib/phase";
 import { useRoleInfo } from "@/useRoleInfo";
 
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 interface CampaignCardProps {
   address: `0x${string}`;
+  onConnect?: () => void;
 }
 
-export function CampaignCard({ address: campaignAddress }: CampaignCardProps) {
+export function CampaignCard({
+  address: campaignAddress,
+  onConnect,
+}: CampaignCardProps) {
   const { address: walletAddress, isConnected } = useAccount();
 
   const { data: campaignReads, isLoading } = useReadContracts({
@@ -54,9 +57,7 @@ export function CampaignCard({ address: campaignAddress }: CampaignCardProps) {
   const declaredTotal = campaignReads?.[2]?.result as bigint | undefined;
   const recipientCount = campaignReads?.[3]?.result as bigint | undefined;
   const finalized = campaignReads?.[4]?.result as boolean | undefined;
-  const tokenAddress = campaignReads?.[5]?.result as
-    | `0x${string}`
-    | undefined;
+  const tokenAddress = campaignReads?.[5]?.result as `0x${string}` | undefined;
   const finalizeCheckHandle = campaignReads?.[6]?.result as
     | `0x${string}`
     | undefined;
@@ -82,61 +83,171 @@ export function CampaignCard({ address: campaignAddress }: CampaignCardProps) {
   const role = useRoleInfo(walletAddress, campaignAddress);
 
   return (
-    <Card className="overflow-hidden">
-      <CardHeader>
-        <div className="flex items-start justify-between gap-3">
-          <div className="space-y-1">
-            <CardTitle>{shortAddr(campaignAddress)}</CardTitle>
-            <CardDescription>
-              <a
-                href={`${ETHERSCAN_BASE}/address/${campaignAddress}`}
-                target="_blank"
-                rel="noreferrer"
-                className="hover:text-foreground hover:underline"
-              >
-                View on Etherscan ↗
-              </a>
-            </CardDescription>
-          </div>
-          <div className="flex flex-col items-end gap-1.5">
+    <Link
+      to={`/campaign/${campaignAddress}`}
+      className="group block transition hover:-translate-y-0.5"
+    >
+      <Card className="overflow-hidden">
+        <CardHeader className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge variant={phaseBadgeVariant(phase)}>
-              {isLoading ? "Loading" : phase}
+              {isLoading ? "Loading" : phaseLabel(phase)}
             </Badge>
-            {isConnected &&
-              role.roleLabels.length > 0 && (
-                <Badge variant="cipher">
-                  You · {role.roleLabels.join(" / ")}
-                </Badge>
-              )}
+            <Badge variant="cipher">FHE-encrypted</Badge>
           </div>
-        </div>
-      </CardHeader>
+          <div className="font-mono text-base font-semibold tracking-tight">
+            {shortAddr(campaignAddress)}
+          </div>
+        </CardHeader>
 
-      <CardContent className="space-y-4">
-        <div className="flex flex-wrap gap-2">
-          <MetricPill
-            label="Declared total"
-            value={formatTokenAmount(declaredTotal, tokenDecimals, tokenSymbol)}
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <MetricPill
+              label="Declared total"
+              value={formatTokenAmount(
+                declaredTotal,
+                tokenDecimals,
+                tokenSymbol,
+              )}
+            />
+            <MetricPill
+              label="Recipients"
+              value={
+                recipientCount === undefined
+                  ? "—"
+                  : recipientCount.toString()
+              }
+            />
+          </div>
+
+          <YourRoleRow
+            isConnected={isConnected}
+            roleLabels={role.roleLabels}
+            onConnect={onConnect}
           />
-          <MetricPill
-            label="Recipients"
-            value={recipientCount === undefined ? "—" : recipientCount.toString()}
+
+          <SecondaryFields
+            admin={admin}
+            auditor={auditor}
+            tokenAddress={tokenAddress}
+            tokenSymbol={tokenSymbol}
           />
-        </div>
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
 
-        <div className="flex flex-wrap gap-2">
-          <InlineField label="Admin" value={admin} />
-          <InlineField label="Auditor" value={auditor} />
-          <InlineField label="Token" value={tokenAddress} extra={tokenSymbol} />
-        </div>
-      </CardContent>
+function YourRoleRow({
+  isConnected,
+  roleLabels,
+  onConnect,
+}: {
+  isConnected: boolean;
+  roleLabels: string[];
+  onConnect?: () => void;
+}) {
+  if (!isConnected) {
+    return (
+      <button
+        type="button"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onConnect?.();
+        }}
+        className="inline-flex items-center"
+      >
+        <Badge variant="outline" className="cursor-pointer hover:bg-surface">
+          Your role · Connect wallet to see your role
+        </Badge>
+      </button>
+    );
+  }
+  if (roleLabels.length === 0) {
+    return (
+      <Badge variant="muted">Your role · Not involved</Badge>
+    );
+  }
+  return (
+    <Badge variant="cipher">Your role · {roleLabels.join(" · ")}</Badge>
+  );
+}
 
-      <CardFooter>
-        <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-          ◢ Per-recipient amounts encrypted with FHEVM
-        </p>
-      </CardFooter>
-    </Card>
+function SecondaryFields({
+  admin,
+  auditor,
+  tokenAddress,
+  tokenSymbol,
+}: {
+  admin?: `0x${string}`;
+  auditor?: `0x${string}`;
+  tokenAddress?: `0x${string}`;
+  tokenSymbol?: unknown;
+}) {
+  const tokenDisplay = (() => {
+    if (!tokenAddress) return null;
+    return typeof tokenSymbol === "string" && tokenSymbol.length > 0
+      ? tokenSymbol
+      : shortAddr(tokenAddress);
+  })();
+
+  return (
+    <p className="border-t border-border/60 pt-3 font-mono text-[11px] leading-relaxed text-muted-foreground">
+      {admin && (
+        <SecondaryLink
+          label="Created by"
+          value={admin}
+          display={shortAddr(admin)}
+        />
+      )}
+      {auditor && (
+        <>
+          <span className="px-1">·</span>
+          <SecondaryLink
+            label="Auditor"
+            value={auditor}
+            display={shortAddr(auditor)}
+          />
+        </>
+      )}
+      {tokenAddress && tokenDisplay && (
+        <>
+          <span className="px-1">·</span>
+          <SecondaryLink
+            label="Token"
+            value={tokenAddress}
+            display={tokenDisplay}
+          />
+        </>
+      )}
+    </p>
+  );
+}
+
+function SecondaryLink({
+  label,
+  value,
+  display,
+}: {
+  label: string;
+  value: `0x${string}`;
+  display: string;
+}) {
+  return (
+    <span>
+      <span>{label} </span>
+      <a
+        href={`${ETHERSCAN_BASE}/address/${value}`}
+        target="_blank"
+        rel="noreferrer"
+        title={value}
+        onClick={(event) => event.stopPropagation()}
+        className="hover:text-foreground hover:underline"
+      >
+        {display}
+      </a>
+    </span>
   );
 }
 
@@ -153,39 +264,6 @@ function MetricPill({ label, value }: { label: string; value: string }) {
   );
 }
 
-function InlineField({
-  label,
-  value,
-  extra,
-}: {
-  label: string;
-  value?: `0x${string}`;
-  extra?: string;
-}) {
-  return (
-    <div className="rounded-lg bg-surface px-4 py-3">
-      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-        {label}
-      </div>
-      <div className="mt-1 font-mono text-sm">
-        {value ? (
-          <a
-            href={`${ETHERSCAN_BASE}/address/${value}`}
-            target="_blank"
-            rel="noreferrer"
-            className="hover:text-primary hover:underline"
-          >
-            {shortAddr(value)}
-          </a>
-        ) : (
-          "—"
-        )}
-        {extra && <span className="ml-2 text-muted-foreground">· {extra}</span>}
-      </div>
-    </div>
-  );
-}
-
 function shortAddr(addr?: `0x${string}`) {
   if (!addr) return "";
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
@@ -194,45 +272,12 @@ function shortAddr(addr?: `0x${string}`) {
 function formatTokenAmount(
   amount: bigint | undefined,
   decimals: number,
-  symbol?: string,
+  symbol?: unknown,
 ) {
   if (amount === undefined) return "—";
   const div = 10n ** BigInt(decimals);
   const whole = amount / div;
   const formatted = whole.toLocaleString("en-US");
-  return symbol ? `${formatted} ${symbol}` : formatted;
-}
-
-const ZERO_HASH =
-  "0x0000000000000000000000000000000000000000000000000000000000000000";
-
-type Phase = "Setup" | "Finalize-pending" | "Claiming" | "Loading";
-
-/** Mirrors AdminPage.derivePhase — keeps Overview + Admin badge wording in
- * sync. Setup = no finalize requested; Finalize-pending = handle emitted but
- * executor hasn't settled callback; Claiming = finalized=true. */
-function derivePhase(
-  finalized: boolean | undefined,
-  finalizeCheckHandle: `0x${string}` | undefined,
-): Phase {
-  if (finalized === undefined) return "Loading";
-  if (finalized === true) return "Claiming";
-  return !finalizeCheckHandle || finalizeCheckHandle === ZERO_HASH
-    ? "Setup"
-    : "Finalize-pending";
-}
-
-function phaseBadgeVariant(
-  phase: Phase,
-): "default" | "cipher" | "success" | "muted" {
-  switch (phase) {
-    case "Setup":
-      return "default";
-    case "Finalize-pending":
-      return "cipher";
-    case "Claiming":
-      return "success";
-    case "Loading":
-      return "muted";
-  }
+  const symbolStr = typeof symbol === "string" ? symbol : "";
+  return symbolStr ? `${formatted} ${symbolStr}` : formatted;
 }
