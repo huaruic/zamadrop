@@ -4,6 +4,7 @@ import { useAccount } from "wagmi";
 
 import { SiweButton } from "@/auth/SiweButton";
 import { authHeader, getSessionToken } from "@/auth/siwe-client";
+import { CampaignCard } from "@/components/CampaignCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { CAMPAIGNS } from "@/config";
 
 const BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
@@ -25,8 +27,6 @@ interface CampaignSummary {
   recipientCount?: number | null;
   status?: string | null;
 }
-
-type Section = "admin" | "recipient" | "auditor";
 
 /** V7 Home page · spec: recipient-discovery + admin-deployment-flow.
  *
@@ -196,6 +196,35 @@ export default function Home() {
         </CardContent>
       </Card>
 
+      <RoleExplainer />
+
+      <div className="mb-10">
+        <SectionHeading
+          title="Explore Campaigns"
+          subtitle="Public overview for every campaign"
+        />
+        {CAMPAIGNS.length === 0 ? (
+          <p className="font-mono text-xs text-muted-foreground">
+            No campaigns found.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 gap-4">
+            {CAMPAIGNS.map((address) => (
+              <Link
+                key={address}
+                to={`/campaign/${address}`}
+                className="group block transition hover:-translate-y-0.5"
+              >
+                <CampaignCard address={address} />
+                <div className="mt-3 text-right font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground transition group-hover:text-primary">
+                  Open overview →
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+
       {error && (
         <Alert variant="destructive" className="mb-6">
           <AlertTitle>Backend unavailable</AlertTitle>
@@ -207,15 +236,16 @@ export default function Home() {
         <Alert variant="muted" className="mb-6">
           <AlertTitle>Connect a wallet</AlertTitle>
           <AlertDescription>
-            Your role-specific sections appear once a wallet is connected. The
-            recipient section additionally requires a SIWE signature (no gas).
+            You can inspect every campaign publicly without connecting. After
+            you connect a wallet, ZamaDrop will reveal any Admin, Recipient,
+            or Auditor access tied to that wallet. Recipient discovery across
+            campaigns still uses a SIWE sign-in (no gas).
           </AlertDescription>
         </Alert>
       )}
 
       <div className="space-y-8">
         <Section
-          kind="admin"
           title="As Admin"
           subtitle="Campaigns deployed by you"
           campaigns={adminToShow}
@@ -223,7 +253,6 @@ export default function Home() {
         />
 
         <Section
-          kind="recipient"
           title="As Recipient"
           subtitle="Campaigns where you can claim"
           campaigns={recipientToShow}
@@ -236,7 +265,6 @@ export default function Home() {
         />
 
         <Section
-          kind="auditor"
           title="As Auditor"
           subtitle="Campaigns you can verify"
           campaigns={auditorToShow}
@@ -248,7 +276,6 @@ export default function Home() {
 }
 
 interface SectionProps {
-  kind: Section;
   title: string;
   subtitle: string;
   campaigns: CampaignSummary[] | null;
@@ -257,7 +284,6 @@ interface SectionProps {
 }
 
 function Section({
-  kind,
   title,
   subtitle,
   campaigns,
@@ -289,7 +315,7 @@ function Section({
       ) : (
         <div className="grid grid-cols-1 gap-4">
           {campaigns.map((c) => (
-            <CampaignSummaryCard key={c.address} kind={kind} campaign={c} />
+            <CampaignSummaryCard key={c.address} campaign={c} />
           ))}
         </div>
       )}
@@ -316,16 +342,64 @@ function SectionHeading({
   );
 }
 
+function RoleExplainer() {
+  return (
+    <div className="mb-10">
+      <SectionHeading
+        title="Roles"
+        subtitle="What each role can see and do"
+      />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <RoleCard
+          title="Public"
+          body="Browse campaign overviews, track public status, and inspect progress without connecting a wallet."
+        />
+        <RoleCard
+          title="Admin"
+          body="Create campaigns, monitor live status, finalize setup, and recover from failed deployment or settlement paths."
+        />
+        <RoleCard
+          title="Recipient"
+          body="Decrypt your own allocation privately and claim tokens when the campaign is live."
+        />
+        <RoleCard
+          title="Auditor"
+          body="Verify recipient list integrity, check solvency, and inspect aggregate or per-claim audit evidence."
+        />
+      </div>
+    </div>
+  );
+}
+
+function RoleCard({
+  title,
+  body,
+}: {
+  title: string;
+  body: string;
+}) {
+  return (
+    <Card className="h-full">
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="font-mono text-xs leading-relaxed text-muted-foreground">
+          {body}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 function CampaignSummaryCard({
-  kind,
   campaign,
 }: {
-  kind: Section;
   campaign: CampaignSummary;
 }) {
   return (
     <Link
-      to={`/c/${campaign.address}?role=${kind}`}
+      to={`/campaign/${campaign.address}`}
       className="group block transition hover:-translate-y-0.5"
     >
       <Card>
@@ -364,7 +438,7 @@ function CampaignSummaryCard({
             />
           </div>
           <div className="mt-4 text-right font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground transition group-hover:text-primary">
-            Open as {kind} →
+            Open overview →
           </div>
         </CardContent>
       </Card>

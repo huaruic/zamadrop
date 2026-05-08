@@ -111,7 +111,7 @@ export default function AdminPage() {
             allocationsSetCount={allocationsSetCount}
           />
 
-          <V7BadgeStrip
+          <CampaignHealthCard
             claimedTotalPlaintext={claimedTotalPlaintext}
             contractBalance={contractBalance}
             recipientListHash={recipientListHash}
@@ -141,28 +141,13 @@ export default function AdminPage() {
             allocationsSetCount={allocationsSetCount}
           />
 
-          <V7BadgeStrip
+          <CampaignHealthCard
             claimedTotalPlaintext={claimedTotalPlaintext}
             contractBalance={contractBalance}
             recipientListHash={recipientListHash}
             decimals={decimals}
             symbol={symbol}
           />
-
-          <SetAllocationForm
-            campaignAddress={campaignAddress}
-            decimals={decimals}
-            symbol={symbol}
-            disabled={phase !== "Setup"}
-            disabledReason={
-              phase !== "Setup"
-                ? "Allocations are locked once finalize is submitted."
-                : undefined
-            }
-            onSuccess={refetchAll}
-          />
-
-          <AllocationLedger campaignAddress={campaignAddress} />
 
           {phase !== "Claiming" && (
             <FinalizePanel
@@ -195,16 +180,30 @@ export default function AdminPage() {
             enabled={stateNum === 2}
             onSuccess={refetchAll}
           />
+
+          <AllocationLedger campaignAddress={campaignAddress} />
+
+          <SetAllocationForm
+            campaignAddress={campaignAddress}
+            decimals={decimals}
+            symbol={symbol}
+            disabled={phase !== "Setup"}
+            disabledReason={
+              phase !== "Setup"
+                ? "Manual recovery is only available while the campaign is still in setup."
+                : undefined
+            }
+            onSuccess={refetchAll}
+          />
         </>
       )}
     </div>
   );
 }
 
-/** V7 badge strip: surface the three new public reads (claimedTotalPlaintext,
- * balanceOf, recipientListHash) so admins have at-a-glance solvency + list
- * integrity signal without leaving this page. */
-function V7BadgeStrip({
+/** Surface the three public health reads so admins can sanity-check campaign
+ * progress without leaving the operations page. */
+function CampaignHealthCard({
   claimedTotalPlaintext,
   contractBalance,
   recipientListHash,
@@ -220,24 +219,24 @@ function V7BadgeStrip({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>V7 invariants</CardTitle>
+        <CardTitle>Campaign health</CardTitle>
         <CardDescription>
-          Public solvency + list-integrity reads. Auditor-grade visibility for
-          admins.
+          Read-only checks for live progress, funds still held by the campaign,
+          and the locked recipient list fingerprint.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <BadgeCell
-            label="Claimed total (plaintext)"
+            label="Claimed so far"
             value={formatTokenAmount(claimedTotalPlaintext, decimals, symbol)}
           />
           <BadgeCell
-            label="Campaign balance"
+            label="Funds remaining"
             value={formatTokenAmount(contractBalance, decimals, symbol)}
           />
           <BadgeCell
-            label="Recipient list hash"
+            label="Recipient list fingerprint"
             value={
               recipientListHash
                 ? `${recipientListHash.slice(0, 10)}…${recipientListHash.slice(-6)}`
@@ -355,7 +354,7 @@ function StatusCard({
           <div className="space-y-1">
             <CardTitle>Campaign status</CardTitle>
             <CardDescription>
-              Public state of this ZamaDrop campaign.
+              Where this campaign is in its post-deploy operations lifecycle.
             </CardDescription>
           </div>
           <Badge variant={phaseVariant}>{phase}</Badge>
@@ -370,13 +369,13 @@ function StatusCard({
           />
           <Stat label="Recipients" value={recipientCount} />
           <Stat
-            label="Allocations set"
+            label="Recipients configured"
             value={`${allocationsSetCount} / ${recipientCount}`}
           />
         </div>
 
         <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-          Running total stays encrypted.
+          Recipient amounts stay encrypted while the campaign is being managed.
         </p>
       </CardContent>
     </Card>

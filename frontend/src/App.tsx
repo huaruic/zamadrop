@@ -1,9 +1,14 @@
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useParams,
+} from "react-router-dom";
 
 import { PageLayout } from "@/components/PageLayout";
 import AdminPage from "@/pages/admin/AdminPage";
 import AuditorPage from "@/pages/auditor/AuditorPage";
-import CampaignDetail from "@/pages/CampaignDetail";
 import CampaignLayout from "@/pages/CampaignLayout";
 import CampaignOverview from "@/pages/CampaignOverview";
 import Home from "@/pages/Home";
@@ -20,9 +25,9 @@ export default function App() {
     <BrowserRouter>
       <PageLayout>
         <Routes>
-          {/* V7 home + role-aware detail routes */}
+          {/* V7 home + public-first detail routes */}
           <Route path="/" element={<Home />} />
-          <Route path="/c/:address" element={<CampaignDetail />} />
+          <Route path="/c/:address" element={<LegacyCampaignRedirect />} />
 
           {/* V7 deployment wizard — 5 nested steps under /wizard. */}
           <Route path="/wizard" element={<WizardLayout />}>
@@ -47,6 +52,14 @@ export default function App() {
       </PageLayout>
     </BrowserRouter>
   );
+}
+
+function LegacyCampaignRedirect() {
+  const { address } = useParams();
+  if (!address) {
+    return <Navigate to="/" replace />;
+  }
+  return <Navigate to={`/campaign/${address}`} replace />;
 }
 
 function NotFound() {
