@@ -54,11 +54,11 @@
 - [x] 8.1 `npm run lint` 通过(残留 6 个 pre-existing 错误在 `badge.tsx` / `button.tsx` / `fhevm.ts`,与本 change 无关)
 - [x] 8.2 `npm run build` 通过(`tsc -b` 无错误,vite build 成功)
 - [x] 8.2.1 `npx vitest run` 全套 33 个测试通过(包含新增 9 个 phase 测试)
-- [ ] 8.3 启动 `npm run dev` 浏览器手动验证(留给用户在 dev 环境跑,本次未启动浏览器)
-- [ ] 8.4 截图对比 Before/After 贴 PR description(留给 PR 阶段)
+- [x] 8.3 启动 `npm run dev` 浏览器手动验证(PR #5 review 阶段已确认)
+- [x] 8.4 截图对比 Before/After 贴 PR description(PR #5 已附截图)
 - [x] 8.5 `openspec validate home-three-section-ia --type change` 通过
 
 ## 9. 善后
 
 - [x] 9.1 `docs/WORKLOG.md` 追加摘要
-- [ ] 9.2 PR description 注明 P1 backlog(留给 PR 创建时填写)
+- [x] 9.2 PR description 注明 P1 backlog(PR #5 description 已注明)
