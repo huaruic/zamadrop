@@ -38,7 +38,7 @@ import { useWizardStore } from "./state";
  *   - Render the 5 sub-step strip with live status + recipient counter for
  *     5.3.
  *   - On success: show shareable URLs (admin / recipient / auditor) for
- *     `/c/<address>?role=…`.
+ *     `/campaign/<address>`.
  *   - On failure: render an actionable error message; for FinalizeFailureError
  *     specifically, point the user at withdrawExcess / cancelCampaign in the
  *     admin view of the deployed campaign.
@@ -325,7 +325,7 @@ export default function Step5Deploy() {
           setErrorRecovery(
             err.kind === "failed"
               ? "The campaign entered Failed state. Open the admin view of the deployed campaign and click cancelCampaign to recover funds, then redeploy with corrected amounts."
-              : "The relayer SDK could not reach the KMS gateway after 3 attempts. State remains Finalizing on chain — click Retry once the gateway recovers (fund/finalize are idempotent and won't be re-charged), or open the admin view to inspect.",
+              : "The relayer SDK could not reach the KMS gateway after 3 attempts. State remains Finalizing on chain — click Retry once the gateway recovers (fund/finalize are idempotent and won't be re-charged), or open the campaign overview to inspect the current state.",
           );
         } else {
           setErrorMsg(err instanceof Error ? err.message : String(err));
@@ -546,12 +546,12 @@ export default function Step5Deploy() {
               <p>
                 Campaign was created at{" "}
                 <Link
-                  to={`/c/${campaignAddress}?role=admin`}
+                  to={`/campaign/${campaignAddress}`}
                   className="text-foreground hover:text-primary hover:underline"
                 >
                   {campaignAddress}
                 </Link>{" "}
-                — open the admin view to recover.
+                — open the campaign overview to recover from there.
               </p>
             )}
             <div>
@@ -566,7 +566,7 @@ export default function Step5Deploy() {
           campaignAddress={campaignAddress}
           onDone={() => {
             useWizardStore.getState().reset();
-            navigate(`/c/${campaignAddress}`);
+            navigate(`/campaign/${campaignAddress}`);
           }}
           registrationWarning={registrationWarning}
           onRetryRegister={
@@ -690,17 +690,15 @@ function SuccessCard({
   registerPending?: boolean;
 }) {
   const base = window.location.origin;
-  const adminUrl = `${base}/c/${campaignAddress}?role=admin`;
-  const recipientUrl = `${base}/c/${campaignAddress}?role=recipient`;
-  const auditorUrl = `${base}/c/${campaignAddress}?role=auditor`;
+  const campaignUrl = `${base}/campaign/${campaignAddress}`;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Campaign live</CardTitle>
         <CardDescription>
-          Share these URLs with the recipients and auditor. Role is enforced
-          on chain — the URL only suggests which view to open.
+          Share the campaign overview. After wallet connection, the page
+          reveals any Admin, Recipient, or Auditor access tied to that wallet.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 font-mono text-xs">
@@ -723,9 +721,7 @@ function SuccessCard({
             </AlertDescription>
           </Alert>
         )}
-        <ShareRow label="Admin" url={adminUrl} />
-        <ShareRow label="Recipients" url={recipientUrl} />
-        <ShareRow label="Auditor" url={auditorUrl} />
+        <ShareRow label="Campaign overview" url={campaignUrl} />
         <div className="flex justify-end pt-2">
           <Button onClick={onDone}>Done</Button>
         </div>

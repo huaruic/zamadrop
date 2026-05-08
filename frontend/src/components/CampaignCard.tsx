@@ -103,35 +103,32 @@ export function CampaignCard({ address: campaignAddress }: CampaignCardProps) {
               {isLoading ? "Loading" : phase}
             </Badge>
             {isConnected &&
-              (role.roleLabels.length > 0 ? (
+              role.roleLabels.length > 0 && (
                 <Badge variant="cipher">
                   You · {role.roleLabels.join(" / ")}
                 </Badge>
-              ) : (
-                <Badge variant="muted">No role</Badge>
-              ))}
+              )}
           </div>
         </div>
       </CardHeader>
 
-      <CardContent className="space-y-6">
-        <div className="grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border md:grid-cols-2">
-          <Stat
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap gap-2">
+          <MetricPill
             label="Declared total"
             value={formatTokenAmount(declaredTotal, tokenDecimals, tokenSymbol)}
           />
-          <Stat
+          <MetricPill
             label="Recipients"
             value={recipientCount === undefined ? "—" : recipientCount.toString()}
           />
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Field label="Admin" value={admin} />
-          <Field label="Auditor" value={auditor} />
+        <div className="flex flex-wrap gap-2">
+          <InlineField label="Admin" value={admin} />
+          <InlineField label="Auditor" value={auditor} />
+          <InlineField label="Token" value={tokenAddress} extra={tokenSymbol} />
         </div>
-
-        <Field label="Token" value={tokenAddress} extra={tokenSymbol} />
       </CardContent>
 
       <CardFooter>
@@ -143,20 +140,20 @@ export function CampaignCard({ address: campaignAddress }: CampaignCardProps) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function MetricPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-card p-5">
+    <div className="rounded-lg bg-surface px-4 py-3">
       <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
         {label}
       </div>
-      <div className="mt-1 font-mono text-2xl font-semibold tracking-tight">
+      <div className="mt-1 font-mono text-lg font-semibold tracking-tight">
         {value}
       </div>
     </div>
   );
 }
 
-function Field({
+function InlineField({
   label,
   value,
   extra,
@@ -166,11 +163,11 @@ function Field({
   extra?: string;
 }) {
   return (
-    <div className="space-y-1">
+    <div className="rounded-lg bg-surface px-4 py-3">
       <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
         {label}
       </div>
-      <div className="font-mono text-sm">
+      <div className="mt-1 font-mono text-sm">
         {value ? (
           <a
             href={`${ETHERSCAN_BASE}/address/${value}`}

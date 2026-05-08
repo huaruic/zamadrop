@@ -1,32 +1,42 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAccount, useConnect, useDisconnect } from "wagmi";
-import type { Connector } from "wagmi";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { hasWalletProvider, openMetaMaskInstall } from "@/lib/wallet-connect";
+import { isUserRejectedError } from "@/lib/wallet-error";
 
 export function TopBar() {
   const { address, isConnected } = useAccount();
   const { connect, connectors, isPending, error, reset } = useConnect();
   const { disconnect } = useDisconnect();
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const connector = connectors[0];
+  const connectFeedback = (() => {
+    if (!error || isUserRejectedError(error)) return null;
+    const message = error.message ?? "Wallet connection failed.";
+    if (
+      message.includes("No injected provider found") ||
+      message.includes("Provider not found") ||
+      message.includes("Connector not found")
+    ) {
+      return {
+        tone: "neutral" as const,
+        message:
+          "MetaMask was not detected. Install it, then reopen this page or use a Web3 wallet browser on mobile.",
+      };
+    }
+    return { tone: "error" as const, message };
+  })();
 
-  // Log discovered connectors so users debugging "Connecting…" stuck can see
-  // which providers are visible (EIP-6963 multi-injected discovery surfaces
-  // every installed wallet — picking [0] blindly hits whichever extension
-  // hijacked window.ethereum first).
-  useEffect(() => {
-    if (connectors.length === 0) return;
-    console.log(
-      "[ZamaDrop] connectors:",
-      connectors.map((c) => ({ id: c.id, name: c.name, type: c.type })),
-    );
-  }, [connectors]);
-
-  const handleConnect = (connector: Connector) => {
-    setPickerOpen(false);
+  const handleConnect = async () => {
+    if (!connector) {
+      openMetaMaskInstall();
+      return;
+    }
+    if (!(await hasWalletProvider(connector))) {
+      openMetaMaskInstall();
+      return;
+    }
     connect({ connector });
   };
 
@@ -72,88 +82,28 @@ export function TopBar() {
                 Cancel
               </button>
             </div>
-          ) : connectors.length === 0 ? (
-            <Button size="sm" disabled>
-              No wallet detected
-            </Button>
-          ) : connectors.length === 1 ? (
-            <Button size="sm" onClick={() => handleConnect(connectors[0])}>
-              Connect wallet
-            </Button>
           ) : (
-            <ConnectorPicker
-              connectors={connectors}
-              open={pickerOpen}
-              setOpen={setPickerOpen}
-              onPick={handleConnect}
-            />
+            <Button
+              size="sm"
+              onClick={() => void handleConnect()}
+            >
+              Connect Wallet
+            </Button>
           )}
         </div>
       </div>
-      {error && (
-        <div className="border-t border-destructive/40 bg-destructive/10 px-6 py-1 text-center font-mono text-[11px] text-destructive">
-          {error.message}
+      {connectFeedback && (
+        <div
+          className={
+            connectFeedback.tone === "error"
+              ? "border-t border-destructive/40 bg-destructive/10 px-6 py-1 text-center font-mono text-[11px] text-destructive"
+              : "border-t border-border/60 bg-surface px-6 py-1 text-center font-mono text-[11px] text-muted-foreground"
+          }
+        >
+          {connectFeedback.message}
         </div>
       )}
     </header>
-  );
-}
-
-interface ConnectorPickerProps {
-  connectors: readonly Connector[];
-  open: boolean;
-  setOpen: (open: boolean) => void;
-  onPick: (connector: Connector) => void;
-}
-
-function ConnectorPicker({
-  connectors,
-  open,
-  setOpen,
-  onPick,
-}: ConnectorPickerProps) {
-  return (
-    <div className="relative">
-      <Button size="sm" onClick={() => setOpen(!open)}>
-        Connect wallet ▾
-      </Button>
-      {open && (
-        <>
-          {/* click-outside catcher */}
-          <div
-            className="fixed inset-0 z-40"
-            onClick={() => setOpen(false)}
-            aria-hidden
-          />
-          <div className="absolute right-0 top-full z-50 mt-2 min-w-[240px] rounded-md border border-border bg-card p-1 shadow-card">
-            {connectors.map((c) => (
-              <button
-                key={c.uid}
-                type="button"
-                onClick={() => onPick(c)}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left font-mono text-xs",
-                  "hover:bg-secondary focus:bg-secondary focus:outline-none",
-                )}
-              >
-                {c.icon && (
-                  <img
-                    src={c.icon}
-                    alt=""
-                    className="size-4 rounded-sm"
-                    aria-hidden
-                  />
-                )}
-                <span className="flex-1 truncate">{c.name}</span>
-                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                  {c.type}
-                </span>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
   );
 }
 
