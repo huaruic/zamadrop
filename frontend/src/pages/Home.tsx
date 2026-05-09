@@ -14,6 +14,13 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   type CampaignListItem,
   useCampaignList,
 } from "@/hooks/useCampaignList";
@@ -221,27 +228,33 @@ export default function Home() {
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search by name or campaign address"
             />
-            <FilterSelect
+            <Select
               value={statusFilter}
-              onChange={(event) =>
-                setStatusFilter(event.target.value as StatusFilter)
-              }
+              onValueChange={(v) => setStatusFilter(v as StatusFilter)}
             >
-              <option value="all">All</option>
-              <option value="live">Live</option>
-              <option value="closed">Closed</option>
-            </FilterSelect>
-            <FilterSelect
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                <SelectItem value="live">Live</SelectItem>
+                <SelectItem value="closed">Closed</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
               value={sortBy}
-              onChange={(event) =>
-                setSortBy(event.target.value as SortOption)
-              }
+              onValueChange={(v) => setSortBy(v as SortOption)}
             >
-              <option value="recent">Most recent</option>
-              <option value="largest">Largest declared total</option>
-              <option value="recipients">Most recipients</option>
-              <option value="address">Address</option>
-            </FilterSelect>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="recent">Most recent</SelectItem>
+                <SelectItem value="largest">Largest declared total</SelectItem>
+                <SelectItem value="recipients">Most recipients</SelectItem>
+                <SelectItem value="address">Address</SelectItem>
+              </SelectContent>
+            </Select>
           </CardContent>
         </Card>
 
@@ -271,27 +284,6 @@ export default function Home() {
           </div>
         )}
       </section>
-    </div>
-  );
-}
-
-function FilterSelect(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return (
-    <div className="relative">
-      <select
-        {...props}
-        className="flex h-10 w-full appearance-none rounded-md border border-border bg-background px-3 py-2 pr-8 font-mono text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-      />
-      <svg
-        className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
-        width="12"
-        height="12"
-        viewBox="0 0 12 12"
-        fill="none"
-        aria-hidden="true"
-      >
-        <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
     </div>
   );
 }
