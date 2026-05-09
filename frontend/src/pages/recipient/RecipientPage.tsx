@@ -1,8 +1,9 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAccount, useReadContract } from "wagmi";
 
 import { CAMPAIGN_ABI, ERC20_ABI } from "@/abis";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { getFhevmInstance } from "@/fhevm";
 import { useCampaignParam } from "@/hooks/useCampaignParam";
 import { useCampaignReads } from "@/hooks/useCampaignReads";
 import { useTokenMeta } from "@/hooks/useTokenMeta";
@@ -109,6 +110,27 @@ export default function RecipientPage() {
     void refetchClaimed();
     void refetchTransferred();
   }, [refetchAllocationSet, refetchClaimed, refetchTransferred]);
+
+  // Bumped by ClaimStepper.onSettleConfirmed once `executeTransfer`
+  // receipt lands. Drives BalancePanel to refetch immediately rather
+  // than wait for its 8s polling tick — eliminates the "stepper still
+  // settling, balance also stale" race that the user sees as "stuck".
+  const [balanceRefreshSignal, setBalanceRefreshSignal] = useState(0);
+  const handleSettleConfirmed = useCallback(() => {
+    setBalanceRefreshSignal((n) => n + 1);
+  }, []);
+
+  // Pre-warm the FHEVM SDK on mount. First-load `getFhevmInstance` cold
+  // path can take 3-10s (WASM + KMS config fetch); doing it here moves
+  // that latency off the claim button so users don't experience it as
+  // "stuck after I clicked Claim". Idempotent — the helper is a
+  // memoized singleton so subsequent claim-time calls are free.
+  useEffect(() => {
+    void getFhevmInstance().catch(() => {
+      // Silent: pre-warm is best-effort. If it fails the real claim
+      // path will surface the error with proper context.
+    });
+  }, []);
 
   // ─────────────────────────────────────────────
   // State A · disconnected
@@ -223,6 +245,7 @@ export default function RecipientPage() {
         transferred={transferred}
         pendingHandle={pendingHandleData as `0x${string}` | undefined}
         onClaimMined={handleClaimMined}
+        onSettleConfirmed={handleSettleConfirmed}
       />
 
       <BalancePanel
@@ -231,6 +254,7 @@ export default function RecipientPage() {
         decimals={decimals}
         symbol={symbol}
         transferred={transferred}
+        refreshSignal={balanceRefreshSignal}
       />
     </div>
   );

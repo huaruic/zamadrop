@@ -50,6 +50,38 @@ const STATE_FINALIZING = 1;
 const STATE_CLAIMING = 2;
 const STATE_FAILED = 3;
 
+/** Fine-grained phase the active-pull helper is currently in. Mirrors the
+ * wizard's `DeployPhase` so UI components can render the same kind of
+ * "Awaiting signature → Tx submitted → Tx confirming" affordances.
+ *
+ *   - `awaiting_decrypt`: asking the Gateway to run threshold MPC. The user
+ *     does nothing here; this is pure network/MPC latency (3-10s nominal,
+ *     up to 25s with retries on a flaky gateway).
+ *   - `awaiting_signature`: writeContract has been called and the wallet
+ *     popup is open. Waiting on the user.
+ *   - `tx_submitted`: the user signed; we have a tx hash. UI should show
+ *     an Etherscan link and switch copy from "sign the popup" to
+ *     "transaction submitted, waiting for confirmation".
+ *   - `tx_confirming`: tx is in the mempool / being mined. ~12s on Sepolia.
+ *   - `verifying`: receipt has returned successfully; we are reading the
+ *     post-tx chain state (refetching the relevant on-chain flag) before
+ *     we let the caller mark the step as done. Brief (RPC roundtrip),
+ *     but visible enough that without explicit copy the UI looks frozen
+ *     between "transfer mined" and "step turned green". */
+export type SettlePhase =
+  | "awaiting_decrypt"
+  | "awaiting_signature"
+  | "tx_submitted"
+  | "tx_confirming"
+  | "verifying";
+
+export interface SettleProgress {
+  phase: SettlePhase;
+  /** Set on `tx_submitted` and `tx_confirming` so the UI can render an
+   * Etherscan link as soon as the user signs the popup. */
+  txHash?: Hex;
+}
+
 export interface ActivePullContext {
   walletClient: WalletClient;
   publicClient: PublicClient;
@@ -57,6 +89,9 @@ export interface ActivePullContext {
   /** Address that signs the resulting callback tx and pays gas.
    * For finalize: admin. For executeTransfer: recipient (themselves). */
   callerAddress: Address;
+  /** Optional progress hook. Callers that pass this can render distinct
+   * copy per phase; callers that don't get the legacy black-box behavior. */
+  onProgress?: (progress: SettleProgress) => void;
 }
 
 /** Distinguishes "Gateway didn't respond" from "Gateway returned a
@@ -70,6 +105,26 @@ export class CallbackError extends Error {
     super(message);
     this.kind = kind;
     this.name = "CallbackError";
+  }
+}
+
+/** Wait for a tx receipt and verify on-chain success. viem's
+ * `waitForTransactionReceipt` resolves on receipt regardless of status —
+ * a reverted tx ships a receipt with `status === "reverted"`. Without this
+ * check, callers silently treat reverts as success and advance their
+ * stepper, which is exactly the failure mode that produces "the UI says
+ * I'm done but my tokens never arrived". */
+async function awaitOrThrow(
+  publicClient: PublicClient,
+  hash: Hex,
+  context: string,
+): Promise<void> {
+  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success") {
+    throw new CallbackError(
+      `${context} reverted on-chain (tx ${hash}). The transaction was mined but the contract rejected it; check the campaign state and contact the admin if this persists.`,
+      "tx_failed",
+    );
   }
 }
 
@@ -128,10 +183,12 @@ export async function pullAndCallbackFinalize(
     functionName: "finalizeCheckHandle",
   })) as Hex;
 
+  ctx.onProgress?.({ phase: "awaiting_decrypt" });
   const decrypted = await pullDecryption(ctx, handle);
   const sumMatched = decrypted.clearValues[handle] as boolean;
 
   try {
+    ctx.onProgress?.({ phase: "awaiting_signature" });
     const tx = await ctx.walletClient.writeContract({
       abi: CAMPAIGN_ABI,
       address: campaignAddress,
@@ -140,7 +197,10 @@ export async function pullAndCallbackFinalize(
       account: ctx.callerAddress,
       chain: ctx.walletClient.chain,
     });
-    await ctx.publicClient.waitForTransactionReceipt({ hash: tx });
+    ctx.onProgress?.({ phase: "tx_submitted", txHash: tx });
+    ctx.onProgress?.({ phase: "tx_confirming", txHash: tx });
+    await awaitOrThrow(ctx.publicClient, tx, "callbackFinalize");
+    ctx.onProgress?.({ phase: "verifying", txHash: tx });
   } catch (err) {
     const stateAfter = (await ctx.publicClient.readContract({
       address: campaignAddress,
@@ -187,10 +247,12 @@ export async function pullAndExecuteTransfer(
     args: [recipientAddress],
   })) as Hex;
 
+  ctx.onProgress?.({ phase: "awaiting_decrypt" });
   const decrypted = await pullDecryption(ctx, handle);
   const amount = decrypted.clearValues[handle] as bigint;
 
   try {
+    ctx.onProgress?.({ phase: "awaiting_signature" });
     const tx = await ctx.walletClient.writeContract({
       abi: CAMPAIGN_ABI,
       address: campaignAddress,
@@ -199,8 +261,19 @@ export async function pullAndExecuteTransfer(
       account: ctx.callerAddress,
       chain: ctx.walletClient.chain,
     });
-    await ctx.publicClient.waitForTransactionReceipt({ hash: tx });
+    ctx.onProgress?.({ phase: "tx_submitted", txHash: tx });
+    ctx.onProgress?.({ phase: "tx_confirming", txHash: tx });
+    await awaitOrThrow(ctx.publicClient, tx, "executeTransfer");
+    ctx.onProgress?.({ phase: "verifying", txHash: tx });
   } catch (err) {
+    // Race-safe: if a concurrent caller (legacy executor still running,
+    // multi-tab, or our own retry) settled the transfer between our
+    // writeContract and the receipt arriving, we swallow the error and
+    // honour on-chain truth. But a real revert that we just turned into
+    // a CallbackError("tx_failed") above MUST surface — propagate it
+    // unconditionally even if `transferred[me]` happens to be true (it
+    // could be a stale read of a different settler's success).
+    if (err instanceof CallbackError && err.kind === "tx_failed") throw err;
     const settled = (await ctx.publicClient.readContract({
       address: campaignAddress,
       abi: CAMPAIGN_ABI,

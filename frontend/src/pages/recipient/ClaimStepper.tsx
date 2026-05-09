@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { Hex } from "viem";
 import {
   usePublicClient,
   useWalletClient,
@@ -15,17 +16,38 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { ETHERSCAN_BASE } from "@/config";
 import { getFhevmInstance } from "@/fhevm";
 import {
   CallbackError,
   pullAndExecuteTransfer,
+  type SettlePhase,
 } from "@/lib/kms-active-pull";
 import { cn } from "@/lib/utils";
 
 import { shortHandle } from "./shorten";
 
 type StepState = "idle" | "current" | "done";
-type SettlePhase = "idle" | "decrypting" | "submitting" | "done";
+
+/** Settlement state machine for the inner active-pull flow. We split
+ * `idle | active | done` so the React render path can read intent
+ * directly:
+ *
+ *   - `idle` — nothing in flight; show the Resume button if claim() has
+ *     mined but settlement never started (refresh / dismissed popup).
+ *   - `active` — `pullAndExecuteTransfer` is running; render distinct copy
+ *     per `phase` and surface an Etherscan link as soon as the user signs
+ *     the popup. Five sub-phases mirror `SettlePhase` from
+ *     kms-active-pull.ts so wizard and recipient stepper share the same
+ *     vocabulary.
+ *   - `done` — `executeTransfer` receipt confirmed locally. The chain
+ *     read for `transferred[me]` may still be in flight; we use this
+ *     state to render a "Verifying chain state…" alert so the UI is
+ *     never silent in that gap (Codex review caught this dead state). */
+type StepperSettle =
+  | { kind: "idle" }
+  | { kind: "active"; phase: SettlePhase; txHash?: Hex }
+  | { kind: "done"; txHash?: Hex };
 
 interface ClaimStepperProps {
   campaignAddress: `0x${string}`;
@@ -37,6 +59,12 @@ interface ClaimStepperProps {
    * (after `claim()` mines, and again after `executeTransfer()` mines).
    * Parent should refetch chain reads. */
   onClaimMined: () => void;
+  /** Called once `executeTransfer` receipt is confirmed locally, before
+   * the parent's chain reads have necessarily returned. Lets the balance
+   * panel skip its 8s tick and refetch immediately, so users don't see
+   * "tokens already in wallet (per balance)" + "still settling (per
+   * stepper)" race UI. */
+  onSettleConfirmed?: () => void;
 }
 
 const ZERO_HANDLE =
@@ -56,13 +84,14 @@ export function ClaimStepper({
   transferred,
   pendingHandle,
   onClaimMined,
+  onSettleConfirmed,
 }: ClaimStepperProps) {
   const { writeContractAsync, isPending: isSubmitting, error: writeError } =
     useWriteContract();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
-  const [settlePhase, setSettlePhase] = useState<SettlePhase>("idle");
+  const [settle, setSettle] = useState<StepperSettle>({ kind: "idle" });
   const [settleError, setSettleError] = useState<string | null>(null);
 
   /** Active-pull settle: decrypt pendingClaimHandle via Gateway, then submit
@@ -71,22 +100,37 @@ export function ClaimStepper({
    * `claimed === true && transferred === false` — e.g. they refreshed mid-
    * flow or dismissed the second wallet popup). Pure active-pull, never
    * re-calls claim(). */
-  const settle = async () => {
+  const runSettle = async () => {
     if (!walletClient) throw new Error("Wallet client unavailable.");
     const account = walletClient.account;
     if (!account) throw new Error("No wallet account connected.");
     if (!publicClient) throw new Error("Public client unavailable.");
 
-    setSettlePhase("decrypting");
+    // Pre-flight: enter the active state immediately so the UI shows
+    // *something* while we wait on `getFhevmInstance` (cold path can be
+    // 3-10s the first time the page is loaded).
+    setSettle({ kind: "active", phase: "awaiting_decrypt" });
     const fhevm = await getFhevmInstance();
-    setSettlePhase("submitting");
+    let lastTxHash: Hex | undefined;
     await pullAndExecuteTransfer(campaignAddress, account.address, {
       walletClient,
       publicClient,
       fhevm,
       callerAddress: account.address,
+      onProgress: ({ phase, txHash }) => {
+        if (txHash) lastTxHash = txHash;
+        setSettle({ kind: "active", phase, txHash: lastTxHash });
+      },
     });
-    setSettlePhase("done");
+    // executeTransfer receipt confirmed (awaitOrThrow inside the helper
+    // raises CallbackError on revert, so reaching this line means
+    // `transferred[me] = true` is already on chain and atomic with the
+    // ERC-20 transfer that just credited the wallet).
+    setSettle({ kind: "done", txHash: lastTxHash });
+    // Tell the parent immediately so BalancePanel can skip its 8s tick
+    // and refetch now. Mirrors `onClaimMined` semantics but is named for
+    // its specific purpose (helps the stepper escape the verifying gap).
+    onSettleConfirmed?.();
     onClaimMined();
   };
 
@@ -105,7 +149,7 @@ export function ClaimStepper({
     } else {
       setSettleError(err instanceof Error ? err.message : String(err));
     }
-    setSettlePhase("idle");
+    setSettle({ kind: "idle" });
   };
 
   const handleClaim = async () => {
@@ -118,11 +162,24 @@ export function ClaimStepper({
         functionName: "claim",
       });
       if (!publicClient) throw new Error("Public client unavailable.");
-      await publicClient.waitForTransactionReceipt({ hash: claimHash });
+      const claimReceipt = await publicClient.waitForTransactionReceipt({
+        hash: claimHash,
+      });
+      // viem `waitForTransactionReceipt` resolves on receipt regardless of
+      // status; a reverted claim ships `status: "reverted"`. Without this
+      // check we'd silently advance to settle() with `claimed[me] = false`
+      // on chain and the user would see an inscrutable AlreadyClaimed/
+      // NotClaimed cascade. Same pattern as awaitOrThrow in
+      // kms-active-pull.ts.
+      if (claimReceipt.status !== "success") {
+        throw new Error(
+          `claim() reverted on-chain (tx ${claimHash}). Refresh the page and try again — if this persists, the campaign may not be in Claiming state yet.`,
+        );
+      }
       onClaimMined();
 
       // Step 2: active-pull settle — recipient signs the second wallet popup.
-      await settle();
+      await runSettle();
     } catch (err) {
       handleSettleError(err);
     }
@@ -134,27 +191,33 @@ export function ClaimStepper({
   const handleResumeSettle = async () => {
     setSettleError(null);
     try {
-      await settle();
+      await runSettle();
     } catch (err) {
       handleSettleError(err);
     }
   };
 
-  // Step state derivation.
+  // Step state derivation. `transferred` is the on-chain truth and the
+  // primary driver. But it can lag the local `runSettle` completion by a
+  // RPC roundtrip + React re-render gap (Codex review caught this); when
+  // `settle.kind === "done"` we treat step2/step3 as visually done so the
+  // UI doesn't sit in a silent "current with no spinner" state.
+  const localSettleDone = settle.kind === "done";
   const step1: StepState = claimed ? "done" : finalized ? "current" : "idle";
-  const step2: StepState = transferred
-    ? "done"
-    : claimed
-      ? "current"
-      : "idle";
-  const step3: StepState = transferred ? "done" : "idle";
+  const step2: StepState =
+    transferred || localSettleDone
+      ? "done"
+      : claimed
+        ? "current"
+        : "idle";
+  const step3: StepState =
+    transferred || localSettleDone ? "done" : "idle";
 
   const settledHandle =
     pendingHandle && pendingHandle !== ZERO_HANDLE ? pendingHandle : undefined;
 
-  const settling =
-    settlePhase === "decrypting" || settlePhase === "submitting";
-  const claimButtonDisabled = isSubmitting || settling;
+  const isSettleActive = settle.kind === "active";
+  const claimButtonDisabled = isSubmitting || isSettleActive;
 
   return (
     <Card>
@@ -188,7 +251,7 @@ export function ClaimStepper({
               >
                 {isSubmitting
                   ? "Awaiting wallet…"
-                  : settling
+                  : isSettleActive
                     ? "Settling…"
                     : "Claim allocation"}
               </Button>
@@ -230,27 +293,14 @@ export function ClaimStepper({
                   started or got interrupted. Lets a recipient who dismissed
                   the second wallet popup (or refreshed mid-flow) finish
                   Step 2 without re-calling claim() — that would revert
-                  AlreadyClaimed. Hidden while settle() is in flight. */}
-              {settlePhase === "idle" && !settleError && (
+                  AlreadyClaimed. Hidden while runSettle() is in flight. */}
+              {settle.kind === "idle" && !settleError && (
                 <Button onClick={handleResumeSettle}>
                   Resume settlement
                 </Button>
               )}
-              {settlePhase === "decrypting" && (
-                <Alert variant="info">
-                  <AlertTitle>Decrypting amount via KMS…</AlertTitle>
-                  <AlertDescription>
-                    Asking the Gateway to run threshold MPC. ~3–10 seconds.
-                  </AlertDescription>
-                </Alert>
-              )}
-              {settlePhase === "submitting" && (
-                <Alert variant="info">
-                  <AlertTitle>Submitting transfer…</AlertTitle>
-                  <AlertDescription>
-                    Sign the second wallet popup to push the ERC-20 transfer.
-                  </AlertDescription>
-                </Alert>
+              {settle.kind === "active" && (
+                <PhaseAlert phase={settle.phase} txHash={settle.txHash} />
               )}
               {settleError && (
                 <div className="space-y-2">
@@ -265,6 +315,21 @@ export function ClaimStepper({
               )}
             </div>
           )}
+          {/* The "verifying chain state" gap: local settle is done but the
+              parent's `transferred` refetch hasn't returned yet, so step2
+              flipped to "done" via the localSettleDone fallback. Show a
+              soft indicator inside step2's done card so users get a clean
+              "waiting for chain to confirm" beat instead of a silent
+              transition. Renders briefly (one RPC roundtrip). */}
+          {step2 === "done" && !transferred && settle.kind === "done" && (
+            <Alert variant="info">
+              <AlertTitle>Verifying chain state…</AlertTitle>
+              <AlertDescription>
+                Transfer mined. Waiting on the page to refresh on-chain
+                state — typically &lt; 2 seconds.
+              </AlertDescription>
+            </Alert>
+          )}
         </Step>
 
         <Step
@@ -276,6 +341,70 @@ export function ClaimStepper({
 
       </CardContent>
     </Card>
+  );
+}
+
+/** Distinct copy + Etherscan link per active-pull phase. Replaces the
+ * old single "Submitting transfer… Sign the second wallet popup" copy
+ * that was shown for all five sub-stages — including after the user had
+ * already signed and the tx was mining, which produced the
+ * money-already-in-wallet-but-stepper-still-says-sign dissonance Codex
+ * review caught. */
+function PhaseAlert({ phase, txHash }: { phase: SettlePhase; txHash?: Hex }) {
+  if (phase === "awaiting_decrypt") {
+    return (
+      <Alert variant="info">
+        <AlertTitle>Decrypting amount via KMS…</AlertTitle>
+        <AlertDescription>
+          Asking the Gateway to run threshold MPC. ~3–10 seconds. The
+          wallet popup will appear after this completes — you do not need
+          to sign anything yet.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+  if (phase === "awaiting_signature") {
+    return (
+      <Alert variant="info">
+        <AlertTitle>Sign the wallet popup</AlertTitle>
+        <AlertDescription>
+          A second wallet popup is now open. Confirm to push the ERC-20
+          transfer on-chain.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+  if (phase === "tx_submitted" || phase === "tx_confirming") {
+    return (
+      <Alert variant="info">
+        <AlertTitle>Transaction submitted</AlertTitle>
+        <AlertDescription className="space-y-1">
+          <p>
+            Waiting for one block of confirmation on Sepolia (~12 seconds).
+            You can close this tab — the transfer will still settle.
+          </p>
+          {txHash && (
+            <a
+              href={`${ETHERSCAN_BASE}/tx/${txHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block font-mono text-[11px] uppercase tracking-[0.18em] text-foreground hover:text-primary hover:underline"
+            >
+              View on Etherscan ↗
+            </a>
+          )}
+        </AlertDescription>
+      </Alert>
+    );
+  }
+  // phase === "verifying"
+  return (
+    <Alert variant="info">
+      <AlertTitle>Verifying chain state…</AlertTitle>
+      <AlertDescription>
+        Transfer confirmed. Reading post-tx contract state.
+      </AlertDescription>
+    </Alert>
   );
 }
 
