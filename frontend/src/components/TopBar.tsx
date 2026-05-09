@@ -3,7 +3,7 @@ import { useAccount, useConnect, useDisconnect } from "wagmi";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { hasWalletProvider, openMetaMaskInstall } from "@/lib/wallet-connect";
+import { openMetaMaskInstall } from "@/lib/wallet-connect";
 import { isUserRejectedError } from "@/lib/wallet-error";
 
 export function TopBar() {
@@ -28,12 +28,8 @@ export function TopBar() {
     return { tone: "error" as const, message };
   })();
 
-  const handleConnect = async () => {
+  const handleConnect = () => {
     if (!connector) {
-      openMetaMaskInstall();
-      return;
-    }
-    if (!(await hasWalletProvider(connector))) {
       openMetaMaskInstall();
       return;
     }
@@ -85,7 +81,7 @@ export function TopBar() {
           ) : (
             <Button
               size="sm"
-              onClick={() => void handleConnect()}
+              onClick={handleConnect}
             >
               Connect Wallet
             </Button>

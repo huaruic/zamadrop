@@ -122,13 +122,13 @@ export default function Home() {
   const isAllEmpty = directoryItems.length === 0;
   const isFilterEmpty = !isAllEmpty && filteredItems.length === 0;
 
-  const startCampaign = async () => {
+  const startCampaign = () => {
     if (isConnected) {
       navigate("/wizard");
       return;
     }
     setPendingAction("deploy");
-    await connectWallet();
+    connectWallet();
   };
 
   const browseCampaigns = () => {
@@ -155,10 +155,18 @@ export default function Home() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
-          <Button onClick={() => void startCampaign()}>Create campaign</Button>
+          <Button onClick={startCampaign}>Create campaign</Button>
           <Button variant="outline" onClick={browseCampaigns}>
             Browse campaigns
           </Button>
+          {pendingAction && !isConnected && !connectError && (
+            <Alert variant="muted" className="mt-3 w-full">
+              <AlertTitle>Connect your wallet</AlertTitle>
+              <AlertDescription>
+                Approve the connection request in your wallet to continue.
+              </AlertDescription>
+            </Alert>
+          )}
           {connectError && (
             <Alert variant="muted" className="mt-3 w-full">
               <AlertTitle>Wallet connection note</AlertTitle>
@@ -236,10 +244,22 @@ export default function Home() {
 
 function FilterSelect(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select
-      {...props}
-      className="flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-    />
+    <div className="relative">
+      <select
+        {...props}
+        className="flex h-10 w-full appearance-none rounded-md border border-border bg-background px-3 py-2 pr-8 font-mono text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      />
+      <svg
+        className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+        width="12"
+        height="12"
+        viewBox="0 0 12 12"
+        fill="none"
+        aria-hidden="true"
+      >
+        <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
   );
 }
 
