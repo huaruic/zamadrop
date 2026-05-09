@@ -70,6 +70,11 @@ export interface WizardState {
   // Draft identity
   draftId: string | null;
   draftVersion: number;
+  /** Snapshot of `draftId` at the moment the wizard reached `status === "deployed"`.
+   * Used by the Home "Create campaign" entry point to detect that a previous
+   * draft has fully landed on chain and a fresh draft id should be minted
+   * before re-entering the wizard. */
+  lastDeployedDraftId: string | null;
 
   // Navigation
   currentStep: 1 | 2 | 3 | 4 | 5;
@@ -120,6 +125,7 @@ export interface WizardState {
 const initialState = {
   draftId: null,
   draftVersion: 0,
+  lastDeployedDraftId: null,
   currentStep: 1 as const,
   status: "draft" as const,
   name: "",
@@ -156,7 +162,13 @@ export const useWizardStore = create<WizardState>()(
 
       setDeployStep: (deployStep) => set({ deployStep }),
 
-      setStatus: (status) => set({ status }),
+      setStatus: (status) =>
+        set((s) => ({
+          status,
+          ...(status === "deployed" && s.draftId !== null
+            ? { lastDeployedDraftId: s.draftId }
+            : {}),
+        })),
 
       markAllocated: (address) =>
         set((s) => {
@@ -183,6 +195,7 @@ export const useWizardStore = create<WizardState>()(
       partialize: (s) => ({
         draftId: s.draftId,
         draftVersion: s.draftVersion,
+        lastDeployedDraftId: s.lastDeployedDraftId,
         currentStep: s.currentStep,
         name: s.name,
         description: s.description,

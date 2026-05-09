@@ -24,6 +24,7 @@ import {
   phaseFromBackendState,
 } from "@/lib/phase";
 import { useConnectWallet } from "@/lib/use-connect-wallet";
+import { useWizardStore } from "@/pages/wizard/state";
 
 const DIRECTORY_ID = "campaign-directory";
 
@@ -123,6 +124,16 @@ export default function Home() {
   const isFilterEmpty = !isAllEmpty && filteredItems.length === 0;
 
   const startCampaign = () => {
+    const wizard = useWizardStore.getState();
+    const previousLanded =
+      wizard.draftId !== null &&
+      wizard.draftId === wizard.lastDeployedDraftId;
+    if (previousLanded) {
+      wizard.reset();
+    }
+    if (useWizardStore.getState().draftId === null) {
+      useWizardStore.getState().setDraftId(crypto.randomUUID());
+    }
     if (isConnected) {
       navigate("/wizard");
       return;
