@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useReadContract, useWalletClient } from "wagmi";
 
 import { ERC20_ABI } from "@/abis";
@@ -22,6 +22,11 @@ interface BalancePanelProps {
    * on-chain. Gates the "Add token to wallet" affordance — there is no
    * point asking a recipient to add a token they have not yet received. */
   transferred?: boolean;
+  /** Monotonically-increasing counter; bump whenever the parent knows the
+   * balance just changed (e.g. settlement just confirmed) so we can
+   * refetch immediately instead of waiting up to 8s for the next poll
+   * tick. Optional — when absent, the 8s polling alone drives updates. */
+  refreshSignal?: number;
 }
 
 type WatchAssetState =
@@ -47,8 +52,9 @@ export function BalancePanel({
   decimals,
   symbol,
   transferred,
+  refreshSignal,
 }: BalancePanelProps) {
-  const { data: balance } = useReadContract({
+  const { data: balance, refetch: refetchBalance } = useReadContract({
     address: tokenAddress,
     abi: ERC20_ABI,
     functionName: "balanceOf",
@@ -59,6 +65,16 @@ export function BalancePanel({
     },
   });
   const { data: walletClient } = useWalletClient();
+
+  // When the parent emits a refresh signal (settlement just confirmed),
+  // refetch immediately instead of waiting up to 8s for the next poll
+  // tick. Without this, users see "stepper still settling" while the
+  // balance is stale, then balance jumps after a beat — the cognitive
+  // dissonance Codex review flagged.
+  useEffect(() => {
+    if (refreshSignal === undefined) return;
+    void refetchBalance();
+  }, [refreshSignal, refetchBalance]);
 
   const [watchState, setWatchState] = useState<WatchAssetState>({ kind: "idle" });
 
