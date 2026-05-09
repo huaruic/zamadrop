@@ -4,7 +4,6 @@ import { query } from "../db/client.js";
 import { config } from "../config.js";
 
 const POLL_INTERVAL_MS = 12_000;
-const LAST_BLOCK_KEY = "indexer.last_block";
 
 // Pre-parsed event ABIs for getLogs filtering.
 const EVT_ALLOCATION_SET = parseAbiItem("event AllocationSet(address indexed recipient)");
@@ -25,33 +24,19 @@ function getClient() {
   return client;
 }
 
-async function readLastBlock(): Promise<bigint> {
-  const rows = await query<{ value: string }>(
-    "SELECT value FROM kv_state WHERE key = $1",
-    [LAST_BLOCK_KEY]
-  );
-  if (rows.length === 0) return 0n;
-  try {
-    return BigInt(rows[0].value);
-  } catch {
-    return 0n;
-  }
+interface KnownCampaign {
+  address: Address;
+  lastIndexedBlock: bigint;
 }
 
-async function writeLastBlock(block: bigint): Promise<void> {
-  await query(
-    `INSERT INTO kv_state (key, value)
-       VALUES ($1, $2)
-     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-    [LAST_BLOCK_KEY, block.toString()]
+async function listKnownCampaigns(): Promise<KnownCampaign[]> {
+  const rows = await query<{ address: string; last_indexed_block: string | number }>(
+    "SELECT address, last_indexed_block FROM campaigns"
   );
-}
-
-async function listKnownCampaigns(): Promise<Address[]> {
-  const rows = await query<{ address: string }>(
-    "SELECT address FROM campaigns"
-  );
-  return rows.map(r => r.address as Address);
+  return rows.map(r => ({
+    address: r.address as Address,
+    lastIndexedBlock: BigInt(r.last_indexed_block),
+  }));
 }
 
 async function handleAllocationSet(
@@ -72,14 +57,29 @@ async function handleFinalized(
   campaign: Address,
   log: Log & { args: { success?: boolean } }
 ) {
-  if (log.args.success !== true || log.blockNumber == null) return;
-  await query(
-    `UPDATE campaigns
-        SET state = 'claiming',
-            finalized_at_block = $2
-      WHERE address = $1`,
-    [campaign, log.blockNumber.toString()]
-  );
+  if (log.blockNumber == null) return;
+  const success = log.args.success;
+  if (success === true) {
+    await query(
+      `UPDATE campaigns
+          SET state = 'claiming',
+              finalized_at_block = $2
+        WHERE address = $1`,
+      [campaign, log.blockNumber.toString()]
+    );
+  } else if (success === false) {
+    await query(
+      `UPDATE campaigns
+          SET state = 'failed',
+              finalized_at_block = $2
+        WHERE address = $1`,
+      [campaign, log.blockNumber.toString()]
+    );
+  } else {
+    console.warn(
+      `[indexer] Finalized event for ${campaign} at block ${log.blockNumber} has missing success flag; skipping`
+    );
+  }
 }
 
 async function handleClaimed(
@@ -118,13 +118,61 @@ async function handleTokenTransferred(
   );
 }
 
+async function indexCampaign(
+  campaign: KnownCampaign,
+  tip: bigint
+): Promise<void> {
+  if (campaign.lastIndexedBlock >= tip) {
+    return;
+  }
+  const fromBlock = campaign.lastIndexedBlock + 1n;
+  const c = getClient();
+
+  const [allocLogs, finLogs, claimLogs, transferLogs] = await Promise.all([
+    c.getLogs({
+      address: campaign.address,
+      event: EVT_ALLOCATION_SET,
+      fromBlock,
+      toBlock: tip,
+    }),
+    c.getLogs({
+      address: campaign.address,
+      event: EVT_FINALIZED,
+      fromBlock,
+      toBlock: tip,
+    }),
+    c.getLogs({
+      address: campaign.address,
+      event: EVT_CLAIMED,
+      fromBlock,
+      toBlock: tip,
+    }),
+    c.getLogs({
+      address: campaign.address,
+      event: EVT_TOKEN_TRANSFERRED,
+      fromBlock,
+      toBlock: tip,
+    }),
+  ]);
+
+  for (const log of allocLogs) await handleAllocationSet(campaign.address, log as Log & { args: { recipient?: string } });
+  for (const log of finLogs) await handleFinalized(campaign.address, log as Log & { args: { success?: boolean } });
+  for (const log of claimLogs) await handleClaimed(campaign.address, log as Log & { args: { recipient?: string } });
+  for (const log of transferLogs) await handleTokenTransferred(campaign.address, log as Log & { args: { user?: string; amount?: bigint } });
+
+  await query(
+    `UPDATE campaigns SET last_indexed_block = $2 WHERE address = $1`,
+    [campaign.address, tip.toString()]
+  );
+}
+
 /**
  * One indexer tick:
- *   1. Read kv_state['indexer.last_block'] (default 0).
- *   2. Read current chain tip.
- *   3. For each known campaign address, fetch logs in (lastBlock, tip]
- *      for the four V7 events and dispatch to handlers.
- *   4. On success, persist tip as the new last_block.
+ *   1. Read chain tip once.
+ *   2. For each known campaign, scan (lastIndexedBlock, tip] for the four
+ *      V7 events, dispatch handlers, and on success advance that campaign's
+ *      cursor to tip. Per-campaign cursors mean a freshly-registered
+ *      campaign starts from its own deploy block, not a stale global pointer.
  */
 export async function indexerTick(): Promise<void> {
   const campaigns = await listKnownCampaigns();
@@ -134,47 +182,14 @@ export async function indexerTick(): Promise<void> {
 
   const c = getClient();
   const tip = await c.getBlockNumber();
-  const lastBlock = await readLastBlock();
-  if (tip <= lastBlock) {
-    return;
-  }
-  const fromBlock = lastBlock + 1n;
 
   for (const campaign of campaigns) {
-    const [allocLogs, finLogs, claimLogs, transferLogs] = await Promise.all([
-      c.getLogs({
-        address: campaign,
-        event: EVT_ALLOCATION_SET,
-        fromBlock,
-        toBlock: tip,
-      }),
-      c.getLogs({
-        address: campaign,
-        event: EVT_FINALIZED,
-        fromBlock,
-        toBlock: tip,
-      }),
-      c.getLogs({
-        address: campaign,
-        event: EVT_CLAIMED,
-        fromBlock,
-        toBlock: tip,
-      }),
-      c.getLogs({
-        address: campaign,
-        event: EVT_TOKEN_TRANSFERRED,
-        fromBlock,
-        toBlock: tip,
-      }),
-    ]);
-
-    for (const log of allocLogs) await handleAllocationSet(campaign, log as any);
-    for (const log of finLogs) await handleFinalized(campaign, log as any);
-    for (const log of claimLogs) await handleClaimed(campaign, log as any);
-    for (const log of transferLogs) await handleTokenTransferred(campaign, log as any);
+    try {
+      await indexCampaign(campaign, tip);
+    } catch (err) {
+      console.error(`[indexer] campaign ${campaign.address} tick failed:`, err);
+    }
   }
-
-  await writeLastBlock(tip);
 }
 
 let timer: NodeJS.Timeout | null = null;

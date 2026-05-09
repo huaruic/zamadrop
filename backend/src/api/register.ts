@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { createPublicClient, http, type Address } from "viem";
+import { createPublicClient, http, type Address, type Hash } from "viem";
 import { sepolia } from "viem/chains";
 import { query } from "../db/client.js";
 import { config } from "../config.js";
@@ -16,7 +16,20 @@ const body = z.object({
   description: z.string().nullable().optional(),
   draftId: z.string().nullable().optional(),
   token: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(),
+  deployedTxHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/).optional(),
 });
+
+// Mirrors the on-chain `enum State { Setup, Finalizing, Claiming, Failed }`
+// from contracts/ZamaDropCampaign.sol. Index by the uint8 returned from `state()`.
+const STATE_BY_INDEX = ["setup", "finalizing", "claiming", "failed"] as const;
+
+function mapChainState(raw: number | bigint): string {
+  const idx = typeof raw === "bigint" ? Number(raw) : raw;
+  if (idx < 0 || idx >= STATE_BY_INDEX.length) {
+    throw new Error(`unknown chain state index ${idx}`);
+  }
+  return STATE_BY_INDEX[idx];
+}
 
 // Factory so tests can override the public client by mocking the module.
 // At runtime we lazily build it once.
@@ -47,7 +60,7 @@ registerRouter.post("/register-campaign", async (req, res) => {
   if (!parsed.success) {
     return res.status(400).json({ error: "invalid body" });
   }
-  const { address, admin, name, description, draftId } = parsed.data;
+  const { address, admin, name, description, draftId, deployedTxHash } = parsed.data;
   const client = getPublicClient();
   const campaignAddress = address as Address;
 
@@ -57,8 +70,9 @@ registerRouter.post("/register-campaign", async (req, res) => {
   let chainHash: string;
   let chainDeclared: bigint;
   let chainCount: bigint;
+  let chainStateRaw: number;
   try {
-    const [a, au, tk, hash, declared, count] = await Promise.all([
+    const [a, au, tk, hash, declared, count, st] = await Promise.all([
       client.readContract({
         address: campaignAddress,
         abi: campaignAbi,
@@ -89,6 +103,11 @@ registerRouter.post("/register-campaign", async (req, res) => {
         abi: campaignAbi,
         functionName: "recipientCount",
       }) as Promise<bigint>,
+      client.readContract({
+        address: campaignAddress,
+        abi: campaignAbi,
+        functionName: "state",
+      }) as Promise<number>,
     ]);
     chainAdmin = a;
     chainAuditor = au;
@@ -96,6 +115,7 @@ registerRouter.post("/register-campaign", async (req, res) => {
     chainHash = hash;
     chainDeclared = declared;
     chainCount = count;
+    chainStateRaw = st;
   } catch (err) {
     return res.status(502).json({ error: "chain read failed", detail: String(err) });
   }
@@ -104,11 +124,41 @@ registerRouter.post("/register-campaign", async (req, res) => {
     return res.status(400).json({ error: "admin mismatch on-chain" });
   }
 
+  let stateString: string;
+  try {
+    stateString = mapChainState(chainStateRaw);
+  } catch (err) {
+    return res.status(502).json({ error: "chain state unknown", detail: String(err) });
+  }
+
+  let deployedAtBlock: bigint;
+  let deployedTxHashStored: string | null = null;
+  if (deployedTxHash) {
+    try {
+      const receipt = await client.getTransactionReceipt({
+        hash: deployedTxHash as Hash,
+      });
+      deployedAtBlock = receipt.blockNumber;
+      deployedTxHashStored = deployedTxHash;
+    } catch (err) {
+      return res.status(502).json({ error: "tx receipt fetch failed", detail: String(err) });
+    }
+  } else {
+    try {
+      deployedAtBlock = await client.getBlockNumber();
+    } catch (err) {
+      return res.status(502).json({ error: "block tip fetch failed", detail: String(err) });
+    }
+  }
+
+  const lastIndexedBlock = deployedAtBlock > 0n ? deployedAtBlock - 1n : 0n;
+
   await query(
     `INSERT INTO campaigns
        (address, admin, auditor, token, declared_total, recipient_count,
-        recipient_list_hash, state, name, description)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'setup', $8, $9)
+        recipient_list_hash, state, name, description,
+        deployed_at_block, deployed_tx_hash, last_indexed_block)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
      ON CONFLICT (address) DO NOTHING`,
     [
       address,
@@ -118,8 +168,12 @@ registerRouter.post("/register-campaign", async (req, res) => {
       chainDeclared.toString(),
       Number(chainCount),
       chainHash,
+      stateString,
       name ?? null,
       description ?? null,
+      deployedAtBlock.toString(),
+      deployedTxHashStored,
+      lastIndexedBlock.toString(),
     ]
   );
 

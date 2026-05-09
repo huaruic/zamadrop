@@ -15,8 +15,11 @@ CREATE TABLE IF NOT EXISTS campaigns (
   deployed_at_block BIGINT,
   deployed_tx_hash TEXT,
   finalized_at_block BIGINT,
+  last_indexed_block BIGINT NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS last_indexed_block BIGINT NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_campaigns_admin ON campaigns (admin);
 CREATE INDEX IF NOT EXISTS idx_campaigns_auditor ON campaigns (auditor);
