@@ -548,13 +548,15 @@ export default function Step5Deploy() {
           <ol className="space-y-0">
             {([1, 2, 3, 4, 5] as DeploySubStep[]).map((step, idx) => {
               const sub: SubStepStatus =
-                errorMsg && step === deployStep
-                  ? "error"
-                  : deployStep > step
-                    ? "done"
-                    : deployStep === step
-                      ? "active"
-                      : "pending";
+                status === "deployed"
+                  ? "done"
+                  : errorMsg && step === deployStep
+                    ? "error"
+                    : deployStep > step
+                      ? "done"
+                      : deployStep === step
+                        ? "active"
+                        : "pending";
               const isActive = sub === "active";
               const liveText = activeStatusText({
                 isActive,
