@@ -101,6 +101,7 @@ interface RegisterPayload {
   auditor: `0x${string}` | "";
   name: string | null;
   description: string | null;
+  deployedTxHash?: `0x${string}`;
 }
 
 export default function Step5Deploy() {
@@ -170,6 +171,7 @@ export default function Step5Deploy() {
   // Guard against StrictMode double-invoke firing the deploy twice. We only
   // run once per page mount; Retry resets this in tandem with `retryNonce`.
   const startedRef = useRef(hasExistingExecutionState);
+  const deployTxHashRef = useRef<`0x${string}` | null>(null);
 
   // Wallet popup hint: schedule a one-shot tick after POPUP_HINT_DELAY_MS to
   // flip the hint on, and clear/reset it asynchronously when the phase
@@ -329,6 +331,9 @@ export default function Step5Deploy() {
             }
             if (meta?.txHash !== undefined) {
               setTxHash(meta.txHash);
+              if (step === 1 && deployTxHashRef.current === null) {
+                deployTxHashRef.current = meta.txHash;
+              }
             }
           },
           onAllocated: (addr) => {
@@ -356,6 +361,9 @@ export default function Step5Deploy() {
           auditor,
           name: storeNow.name || null,
           description: storeNow.description || null,
+          ...(deployTxHashRef.current
+            ? { deployedTxHash: deployTxHashRef.current }
+            : {}),
         };
         setRegisterPayload(payload);
         await runRegister(payload, setRegistrationWarning);
@@ -418,6 +426,7 @@ export default function Step5Deploy() {
     setDeployStep(1);
     setStatus("draft");
     startedRef.current = false;
+    deployTxHashRef.current = null;
     setDeploymentStarted(true);
   };
 
@@ -433,6 +442,7 @@ export default function Step5Deploy() {
     setDeployStep(1);
     setStatus("draft");
     startedRef.current = false;
+    deployTxHashRef.current = null;
     setRetryNonce((n) => n + 1);
   };
 

@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAccount, useReadContracts } from "wagmi";
+import { useAccount } from "wagmi";
 
-import { CAMPAIGN_ABI } from "@/abis";
 import { CampaignCard } from "@/components/CampaignCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -14,12 +13,15 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { CAMPAIGNS } from "@/config";
+import {
+  type CampaignListItem,
+  useCampaignList,
+} from "@/hooks/useCampaignList";
 import {
   type DirectoryPhase,
   type StatusFilter,
-  derivePhase,
   matchesFilter,
+  phaseFromBackendState,
 } from "@/lib/phase";
 import { useConnectWallet } from "@/lib/use-connect-wallet";
 
@@ -33,6 +35,8 @@ interface DirectoryItem {
   phase: DirectoryPhase;
   declaredTotal?: bigint;
   recipientCount?: bigint;
+  createdAt?: string;
+  backend: CampaignListItem["backend"];
 }
 
 export default function Home() {
@@ -43,6 +47,14 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sortBy, setSortBy] = useState<SortOption>("recent");
+
+  const {
+    items: campaignItems,
+    source,
+    isLoading,
+    error,
+    refetch,
+  } = useCampaignList();
 
   useEffect(() => {
     if (!pendingAction || !isConnected) return;
@@ -57,37 +69,21 @@ export default function Home() {
     return () => clearTimeout(clear);
   }, [connectError, pendingAction]);
 
-  const { data: directoryReads } = useReadContracts({
-    contracts: CAMPAIGNS.flatMap((address) => [
-      { address, abi: CAMPAIGN_ABI, functionName: "declaredTotal" as const },
-      { address, abi: CAMPAIGN_ABI, functionName: "recipientCount" as const },
-      { address, abi: CAMPAIGN_ABI, functionName: "finalized" as const },
-      {
-        address,
-        abi: CAMPAIGN_ABI,
-        functionName: "finalizeCheckHandle" as const,
-      },
-    ]),
-  });
-
-  const directoryItems: DirectoryItem[] = CAMPAIGNS.map((address, index) => {
-    const offset = index * 4;
-    const declaredTotal = directoryReads?.[offset]?.result as bigint | undefined;
-    const recipientCount = directoryReads?.[offset + 1]?.result as
-      | bigint
-      | undefined;
-    const finalized = directoryReads?.[offset + 2]?.result as
-      | boolean
-      | undefined;
-    const finalizeCheckHandle = directoryReads?.[offset + 3]?.result as
-      | `0x${string}`
-      | undefined;
-
+  const directoryItems: DirectoryItem[] = campaignItems.map((item) => {
+    if (item.backend) {
+      return {
+        address: item.address,
+        phase: phaseFromBackendState(item.backend.state),
+        declaredTotal: safeBigint(item.backend.declaredTotal),
+        recipientCount: BigInt(item.backend.recipientCount),
+        createdAt: item.backend.createdAt,
+        backend: item.backend,
+      };
+    }
     return {
-      address,
-      phase: derivePhase(finalized, finalizeCheckHandle),
-      declaredTotal,
-      recipientCount,
+      address: item.address,
+      phase: "Loading",
+      backend: null,
     };
   });
 
@@ -96,7 +92,8 @@ export default function Home() {
     .filter((item) => {
       if (
         normalizedQuery &&
-        !item.address.toLowerCase().includes(normalizedQuery)
+        !item.address.toLowerCase().includes(normalizedQuery) &&
+        !nameMatches(item.backend?.name, normalizedQuery)
       ) {
         return false;
       }
@@ -115,11 +112,14 @@ export default function Home() {
       if (sortBy === "address") {
         return left.address.localeCompare(right.address);
       }
+      if (left.createdAt && right.createdAt) {
+        return right.createdAt.localeCompare(left.createdAt);
+      }
       return directoryItems.findIndex((item) => item.address === left.address) -
         directoryItems.findIndex((item) => item.address === right.address);
     });
 
-  const isAllEmpty = directoryItems.length === 0;
+  const isAllEmpty = !isLoading && directoryItems.length === 0;
   const isFilterEmpty = !isAllEmpty && filteredItems.length === 0;
 
   const startCampaign = () => {
@@ -188,12 +188,27 @@ export default function Home() {
           </div>
         </header>
 
+        {source === "fallback" && (
+          <Alert variant="muted">
+            <AlertTitle>Backend directory unavailable</AlertTitle>
+            <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+              <span>
+                Showing locally-cached campaigns
+                {error ? ` · ${error.message}` : ""}.
+              </span>
+              <Button size="sm" variant="outline" onClick={() => refetch()}>
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+
         <Card className="border-border/80 bg-card/80">
           <CardContent className="grid gap-3 p-4 md:grid-cols-[minmax(0,1.2fr)_180px_180px]">
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search by campaign address"
+              placeholder="Search by name or campaign address"
             />
             <FilterSelect
               value={statusFilter}
@@ -211,7 +226,7 @@ export default function Home() {
                 setSortBy(event.target.value as SortOption)
               }
             >
-              <option value="recent">Directory order</option>
+              <option value="recent">Most recent</option>
               <option value="largest">Largest declared total</option>
               <option value="recipients">Most recipients</option>
               <option value="address">Address</option>
@@ -219,7 +234,13 @@ export default function Home() {
           </CardContent>
         </Card>
 
-        {isAllEmpty ? (
+        {isLoading && directoryItems.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
+            <p className="font-mono text-sm text-muted-foreground">
+              Loading campaigns from backend…
+            </p>
+          </div>
+        ) : isAllEmpty ? (
           <EmptyState
             mode="all-empty"
             onCreateCampaign={() => void startCampaign()}
@@ -232,6 +253,7 @@ export default function Home() {
               <CampaignCard
                 key={item.address}
                 address={item.address}
+                backendData={item.backend}
                 onConnect={() => void connectWallet()}
               />
             ))}
@@ -312,4 +334,20 @@ function compareBigInt(left?: bigint, right?: bigint) {
   const b = right ?? -1n;
   if (a === b) return 0;
   return a > b ? 1 : -1;
+}
+
+function safeBigint(value: string): bigint | undefined {
+  try {
+    return BigInt(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function nameMatches(
+  name: string | null | undefined,
+  normalizedQuery: string,
+): boolean {
+  if (!name) return false;
+  return name.toLowerCase().includes(normalizedQuery);
 }
