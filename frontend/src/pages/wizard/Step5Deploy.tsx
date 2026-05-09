@@ -51,6 +51,12 @@ const TOKEN_ADDRESS = ((): `0x${string}` => {
 
 type SubStepStatus = "pending" | "active" | "done" | "error";
 
+/** UI-only phase superset of DeployPhase. The pre-flight values cover the
+ * window between "user clicked Start" and the first onProgress fired by
+ * executeDeployment, so the dot lights up immediately instead of sitting
+ * silent for 1–5s while RPCs and WASM load. */
+type UiPhase = DeployPhase | "preflight_chain" | "preflight_fhe";
+
 const STEP_LABELS: Record<DeploySubStep, string> = {
   1: "5.1 Deploy ZamaDropCampaign",
   2: "5.2 Fund campaign",
@@ -125,6 +131,11 @@ export default function Step5Deploy() {
    * mid-flow the store partialize whitelist already drops `deployStep`, so
    * this would be inconsistent if persisted. */
   const [phase, setPhase] = useState<DeployPhase | null>(null);
+  /** UI-only phase used by the dot and the active-row status text. Mirrors
+   * `phase` once the deploy side starts firing onProgress, but also covers
+   * the pre-flight window with synthetic values so step 5.1 lights up
+   * immediately on click. */
+  const [uiPhase, setUiPhase] = useState<UiPhase | null>(null);
   const [txHash, setTxHash] = useState<Hex | null>(null);
   const [phaseStartedAt, setPhaseStartedAt] = useState<number | null>(null);
   const [showPopupHint, setShowPopupHint] = useState(false);
@@ -151,6 +162,11 @@ export default function Step5Deploy() {
     hasExistingExecutionState,
   );
 
+  /** When the active sub-step changed; drives the elapsed counter in the
+   * active row. Re-stamped any time `deployStep` advances. */
+  const [stepStartedAt, setStepStartedAt] = useState<number | null>(null);
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+
   // Guard against StrictMode double-invoke firing the deploy twice. We only
   // run once per page mount; Retry resets this in tandem with `retryNonce`.
   const startedRef = useRef(hasExistingExecutionState);
@@ -173,6 +189,27 @@ export default function Step5Deploy() {
       clearTimeout(on);
     };
   }, [phase, phaseStartedAt]);
+
+  // Re-stamp the active-step start time whenever `deployStep` changes. Reads
+  // Date.now() inside a microtask via setTimeout(0) to avoid violating
+  // react-hooks/purity (no synchronous side-effecting reads in render).
+  useEffect(() => {
+    if (deployStep === 0) {
+      const off = setTimeout(() => setStepStartedAt(null), 0);
+      return () => clearTimeout(off);
+    }
+    const stamp = setTimeout(() => setStepStartedAt(Date.now()), 0);
+    return () => clearTimeout(stamp);
+  }, [deployStep]);
+
+  // 1Hz tick driving the elapsed counter on the active row. Stops on
+  // terminal states so we don't keep re-rendering a finished page.
+  useEffect(() => {
+    if (status === "deployed" || status === "failed_partial") return;
+    if (deployStep === 0) return;
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [status, deployStep]);
 
   useEffect(() => {
     if (!deploymentStarted) return;
@@ -263,6 +300,9 @@ export default function Step5Deploy() {
         return;
       }
 
+      setUiPhase("preflight_fhe");
+      setDetail("Initializing encryption…");
+
       setStatus("deploying");
       try {
         const fhevm = await getFhevmInstance();
@@ -282,6 +322,7 @@ export default function Step5Deploy() {
             if (d) setDetail(d);
             if (meta?.phase !== undefined) {
               setPhase(meta.phase);
+              setUiPhase(meta.phase);
               setPhaseStartedAt(
                 meta.phase === "awaiting_signature" ? Date.now() : null,
               );
@@ -299,6 +340,7 @@ export default function Step5Deploy() {
         setStatus("deployed");
         // Clear in-flight phase indicators on success.
         setPhase(null);
+        setUiPhase(null);
         setTxHash(null);
         setPhaseStartedAt(null);
 
@@ -319,6 +361,7 @@ export default function Step5Deploy() {
         await runRegister(payload, setRegistrationWarning);
       } catch (err) {
         setStatus("failed_partial");
+        setUiPhase(null);
         if (err instanceof FinalizeFailureError) {
           setCampaignAddress(err.campaignAddress);
           setErrorMsg(err.message);
@@ -367,11 +410,12 @@ export default function Step5Deploy() {
     setErrorMsg(null);
     setErrorRecovery(null);
     setRegistrationWarning(null);
-    setDetail("");
+    setDetail("Checking network and balances…");
     setPhase(null);
+    setUiPhase("preflight_chain");
     setTxHash(null);
     setPhaseStartedAt(null);
-    setDeployStep(0);
+    setDeployStep(1);
     setStatus("draft");
     startedRef.current = false;
     setDeploymentStarted(true);
@@ -381,11 +425,12 @@ export default function Step5Deploy() {
     setErrorMsg(null);
     setErrorRecovery(null);
     setRegistrationWarning(null);
-    setDetail("");
+    setDetail("Checking network and balances…");
     setPhase(null);
+    setUiPhase("preflight_chain");
     setTxHash(null);
     setPhaseStartedAt(null);
-    setDeployStep(0);
+    setDeployStep(1);
     setStatus("draft");
     startedRef.current = false;
     setRetryNonce((n) => n + 1);
@@ -413,14 +458,17 @@ export default function Step5Deploy() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <ol className="space-y-3">
-              {([1, 2, 3, 4, 5] as DeploySubStep[]).map((step) => (
+            <ol className="space-y-0">
+              {([1, 2, 3, 4, 5] as DeploySubStep[]).map((step, idx) => (
                 <StepRow
                   key={step}
                   step={step}
                   status="pending"
+                  isLast={idx === 4}
+                  segmentBelow="pending"
                   purpose={STEP_PURPOSES[step]}
                   compactDetail={STEP_DETAILS[step]}
+                  showPurposeWhenPending
                 />
               ))}
             </ol>
@@ -469,6 +517,11 @@ export default function Step5Deploy() {
     );
   }
 
+  const elapsed =
+    stepStartedAt != null && status !== "deployed" && status !== "failed_partial"
+      ? Math.max(0, Math.floor((nowTick - stepStartedAt) / 1000))
+      : null;
+
   return (
     <div className="space-y-4">
       <Card>
@@ -492,22 +545,37 @@ export default function Step5Deploy() {
           </div>
         </CardHeader>
         <CardContent>
-          <ol className="space-y-2">
-            {([1, 2, 3, 4, 5] as DeploySubStep[]).map((step) => {
+          <ol className="space-y-0">
+            {([1, 2, 3, 4, 5] as DeploySubStep[]).map((step, idx) => {
               const sub: SubStepStatus =
-                errorMsg && step === deployStep
-                  ? "error"
-                  : deployStep > step
-                    ? "done"
-                    : deployStep === step
-                      ? "active"
-                      : "pending";
-              const isActive = deployStep === step;
+                status === "deployed"
+                  ? "done"
+                  : errorMsg && step === deployStep
+                    ? "error"
+                    : deployStep > step
+                      ? "done"
+                      : deployStep === step
+                        ? "active"
+                        : "pending";
+              const isActive = sub === "active";
+              const liveText = activeStatusText({
+                isActive,
+                uiPhase,
+                detail,
+              });
               return (
                 <StepRow
                   key={step}
                   step={step}
                   status={sub}
+                  isLast={idx === 4}
+                  segmentBelow={
+                    sub === "done"
+                      ? "done"
+                      : sub === "active"
+                        ? "active"
+                        : "pending"
+                  }
                   purpose={STEP_PURPOSES[step]}
                   compactDetail={STEP_DETAILS[step]}
                   trailingCount={
@@ -515,8 +583,10 @@ export default function Step5Deploy() {
                       ? `${allocatedSoFar.length}/${recipients.length}`
                       : undefined
                   }
-                  liveDetail={isActive && detail ? detail : undefined}
+                  liveDetail={liveText}
                   txHash={isActive ? txHash : null}
+                  elapsedSeconds={isActive ? elapsed : null}
+                  onRetry={sub === "error" ? handleRetry : undefined}
                 />
               );
             })}
@@ -612,47 +682,224 @@ async function runRegister(
   }
 }
 
+/** Resolve the live status text for the active row. Pre-flight phases get
+ * canned strings so the active row reads "Checking network…" / "Initializing
+ * encryption…" before executeDeployment ever fires. Once the deploy side
+ * starts emitting onProgress, the real `detail` string from the executor
+ * takes over. */
+function activeStatusText({
+  isActive,
+  uiPhase,
+  detail,
+}: {
+  isActive: boolean;
+  uiPhase: UiPhase | null;
+  detail: string;
+}): string | undefined {
+  if (!isActive) return undefined;
+  if (uiPhase === "preflight_chain") return "Checking network and balances…";
+  if (uiPhase === "preflight_fhe") return "Initializing encryption…";
+  if (uiPhase === "awaiting_signature")
+    return detail || "Awaiting wallet signature…";
+  return detail || undefined;
+}
+
+function formatElapsed(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 function SubStepDot({ status }: { status: SubStepStatus }) {
-  const cls =
-    status === "done"
-      ? "bg-cipher"
-      : status === "active"
-        ? "bg-primary animate-pulse"
-        : status === "error"
-          ? "bg-destructive"
-          : "bg-border";
-  return <span className={`inline-block h-2.5 w-2.5 rounded-full ${cls}`} />;
+  if (status === "active") {
+    return (
+      <span
+        aria-label="in progress"
+        className="block size-3.5 rounded-full border-2 border-primary border-t-transparent animate-spin"
+      />
+    );
+  }
+  if (status === "done") {
+    return (
+      <span
+        aria-label="done"
+        className="flex size-3.5 items-center justify-center rounded-full bg-cipher"
+      >
+        <svg
+          viewBox="0 0 12 12"
+          aria-hidden
+          className="size-2.5 text-white"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <polyline points="2 6 5 9 10 3" />
+        </svg>
+      </span>
+    );
+  }
+  if (status === "error") {
+    return (
+      <span
+        aria-label="error"
+        className="flex size-3.5 items-center justify-center rounded-full bg-destructive"
+      >
+        <svg
+          viewBox="0 0 12 12"
+          aria-hidden
+          className="size-2.5 text-white"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        >
+          <line x1="3" y1="3" x2="9" y2="9" />
+          <line x1="9" y1="3" x2="3" y2="9" />
+        </svg>
+      </span>
+    );
+  }
+  return (
+    <span
+      aria-label="pending"
+      className="block size-3.5 rounded-full border border-border bg-transparent"
+    />
+  );
+}
+
+/** Vertical line connecting one dot to the next. Color reflects the segment's
+ * own status: pending → border, active → yellow→gray gradient with pulse,
+ * done → solid cipher. */
+function ConnectorLine({
+  segment,
+}: {
+  segment: "pending" | "active" | "done";
+}) {
+  if (segment === "done") {
+    return <span className="w-px flex-1 bg-cipher" />;
+  }
+  if (segment === "active") {
+    return (
+      <span className="w-px flex-1 bg-gradient-to-b from-primary to-border animate-pulse" />
+    );
+  }
+  return <span className="w-px flex-1 bg-border" />;
 }
 
 function StepRow({
   step,
   status,
+  isLast,
+  segmentBelow,
   purpose,
   compactDetail,
   trailingCount,
   liveDetail,
   txHash,
+  elapsedSeconds,
+  onRetry,
+  showPurposeWhenPending,
 }: {
   step: DeploySubStep;
   status: SubStepStatus;
+  isLast: boolean;
+  segmentBelow: "pending" | "active" | "done";
   purpose: string;
   compactDetail?: string;
   trailingCount?: string;
   liveDetail?: string;
   txHash?: Hex | null;
+  elapsedSeconds?: number | null;
+  onRetry?: () => void;
+  /** Pre-flight branch shows the same purpose text it always did. Active
+   * branch's pending rows hide it for density. */
+  showPurposeWhenPending?: boolean;
 }) {
+  const isActive = status === "active";
+  const isError = status === "error";
+  const isPending = status === "pending";
+  const isDone = status === "done";
+
   return (
-    <li className="flex items-start gap-3">
-      <SubStepDot status={status} />
-      <div className="flex-1 font-mono text-xs">
-        <div className="font-semibold">
-          {STEP_LABELS[step]}
-          {trailingCount && (
-            <span className="ml-2 text-muted-foreground">{trailingCount}</span>
+    <li className="flex items-stretch gap-3">
+      <div className="flex w-5 flex-col items-center">
+        <div className="flex h-5 items-center">
+          <SubStepDot status={status} />
+        </div>
+        {!isLast && <ConnectorLine segment={segmentBelow} />}
+      </div>
+      <div
+        className={
+          isActive
+            ? "flex-1 -mx-3 mb-2 rounded-md bg-primary/5 px-3 py-2 font-mono text-xs"
+            : "flex-1 pb-3 font-mono text-xs"
+        }
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div
+            className={
+              isError
+                ? "font-semibold text-destructive"
+                : "font-semibold text-foreground"
+            }
+          >
+            {STEP_LABELS[step]}
+            {trailingCount && (
+              <span className="ml-2 text-muted-foreground">
+                {trailingCount}
+              </span>
+            )}
+            {isActive && elapsedSeconds != null && (
+              <span className="ml-2 text-muted-foreground">
+                {formatElapsed(elapsedSeconds)}
+              </span>
+            )}
+          </div>
+          {isError && onRetry && (
+            <Button size="sm" variant="outline" onClick={onRetry}>
+              Retry
+            </Button>
           )}
         </div>
-        <div className="mt-1 text-muted-foreground">{purpose}</div>
-        {compactDetail && (
+
+        {isActive && (
+          <>
+            <div className="mt-1 text-muted-foreground">{purpose}</div>
+            {liveDetail && (
+              <div className="mt-1 text-foreground">{liveDetail}</div>
+            )}
+            {txHash && (
+              <a
+                href={`${ETHERSCAN_BASE}/tx/${txHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-block text-foreground hover:text-primary hover:underline"
+              >
+                View on Etherscan →
+              </a>
+            )}
+            {compactDetail && (
+              <details className="mt-1 text-muted-foreground">
+                <summary className="cursor-pointer list-none text-[11px] uppercase tracking-[0.18em]">
+                  Details
+                </summary>
+                <p className="mt-1">{compactDetail}</p>
+              </details>
+            )}
+          </>
+        )}
+
+        {isError && liveDetail && (
+          <div className="mt-1 text-destructive">{liveDetail}</div>
+        )}
+
+        {isPending && showPurposeWhenPending && (
+          <div className="mt-1 text-muted-foreground">{purpose}</div>
+        )}
+
+        {isPending && showPurposeWhenPending && compactDetail && (
           <details className="mt-1 text-muted-foreground">
             <summary className="cursor-pointer list-none text-[11px] uppercase tracking-[0.18em]">
               Details
@@ -660,13 +907,13 @@ function StepRow({
             <p className="mt-1">{compactDetail}</p>
           </details>
         )}
-        {liveDetail && <div className="mt-1 text-muted-foreground">{liveDetail}</div>}
-        {txHash && (
+
+        {isDone && txHash && (
           <a
             href={`${ETHERSCAN_BASE}/tx/${txHash}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-1 inline-block text-foreground hover:text-primary hover:underline"
+            className="mt-1 inline-block text-muted-foreground hover:text-primary hover:underline"
           >
             View on Etherscan →
           </a>
