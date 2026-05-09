@@ -2,6 +2,8 @@ export type DirectoryPhase =
   | "Setup"
   | "Finalize-pending"
   | "Claiming"
+  | "Failed"
+  | "Cancelled"
   | "Loading";
 
 export type StatusFilter = "all" | "live" | "closed";
@@ -20,6 +22,23 @@ export function derivePhase(
     : "Finalize-pending";
 }
 
+export function phaseFromBackendState(state: string): DirectoryPhase {
+  switch (state.toLowerCase()) {
+    case "setup":
+      return "Setup";
+    case "finalizing":
+      return "Finalize-pending";
+    case "claiming":
+      return "Claiming";
+    case "failed":
+      return "Failed";
+    case "cancelled":
+      return "Cancelled";
+    default:
+      return "Loading";
+  }
+}
+
 export function phaseLabel(phase: DirectoryPhase): string {
   switch (phase) {
     case "Setup":
@@ -28,6 +47,10 @@ export function phaseLabel(phase: DirectoryPhase): string {
       return "Verifying";
     case "Claiming":
       return "Live";
+    case "Failed":
+      return "Failed";
+    case "Cancelled":
+      return "Cancelled";
     case "Loading":
       return "Loading";
   }
@@ -50,12 +73,17 @@ export function matchesFilter(
 ): boolean {
   if (filter === "all") return true;
   if (filter === "live") return phase === "Claiming";
-  return phase === "Setup" || phase === "Finalize-pending";
+  return (
+    phase === "Setup" ||
+    phase === "Finalize-pending" ||
+    phase === "Failed" ||
+    phase === "Cancelled"
+  );
 }
 
 export function phaseBadgeVariant(
   phase: DirectoryPhase,
-): "default" | "cipher" | "success" | "muted" {
+): "default" | "cipher" | "success" | "muted" | "danger" {
   switch (phase) {
     case "Setup":
       return "default";
@@ -63,6 +91,10 @@ export function phaseBadgeVariant(
       return "cipher";
     case "Claiming":
       return "success";
+    case "Failed":
+      return "danger";
+    case "Cancelled":
+      return "muted";
     case "Loading":
       return "muted";
   }

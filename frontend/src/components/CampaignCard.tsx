@@ -3,9 +3,11 @@ import { useAccount, useReadContract, useReadContracts } from "wagmi";
 
 import { CAMPAIGN_ABI, ERC20_ABI } from "@/abis";
 import { ETHERSCAN_BASE } from "@/config";
+import type { BackendCampaign } from "@/hooks/useCampaignList";
 import {
   derivePhase,
   phaseBadgeVariant,
+  phaseFromBackendState,
   phaseLabel,
 } from "@/lib/phase";
 import { useRoleInfo } from "@/useRoleInfo";
@@ -15,16 +17,20 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 interface CampaignCardProps {
   address: `0x${string}`;
+  backendData?: BackendCampaign | null;
   onConnect?: () => void;
 }
 
 export function CampaignCard({
   address: campaignAddress,
+  backendData,
   onConnect,
 }: CampaignCardProps) {
   const { address: walletAddress, isConnected } = useAccount();
 
-  const { data: campaignReads, isLoading } = useReadContracts({
+  const useChainFallback = !backendData;
+
+  const { data: campaignReads, isLoading: chainLoading } = useReadContracts({
     contracts: [
       { address: campaignAddress, abi: CAMPAIGN_ABI, functionName: "admin" },
       { address: campaignAddress, abi: CAMPAIGN_ABI, functionName: "auditor" },
@@ -50,19 +56,42 @@ export function CampaignCard({
         functionName: "finalizeCheckHandle",
       },
     ],
+    query: { enabled: useChainFallback },
   });
 
-  const admin = campaignReads?.[0]?.result as `0x${string}` | undefined;
-  const auditor = campaignReads?.[1]?.result as `0x${string}` | undefined;
-  const declaredTotal = campaignReads?.[2]?.result as bigint | undefined;
-  const recipientCount = campaignReads?.[3]?.result as bigint | undefined;
-  const finalized = campaignReads?.[4]?.result as boolean | undefined;
-  const tokenAddress = campaignReads?.[5]?.result as `0x${string}` | undefined;
-  const finalizeCheckHandle = campaignReads?.[6]?.result as
+  const chainAdmin = campaignReads?.[0]?.result as `0x${string}` | undefined;
+  const chainAuditor = campaignReads?.[1]?.result as `0x${string}` | undefined;
+  const chainDeclaredTotal = campaignReads?.[2]?.result as bigint | undefined;
+  const chainRecipientCount = campaignReads?.[3]?.result as bigint | undefined;
+  const chainFinalized = campaignReads?.[4]?.result as boolean | undefined;
+  const chainTokenAddress = campaignReads?.[5]?.result as
+    | `0x${string}`
+    | undefined;
+  const chainFinalizeCheckHandle = campaignReads?.[6]?.result as
     | `0x${string}`
     | undefined;
 
-  const phase = derivePhase(finalized, finalizeCheckHandle);
+  const admin = backendData
+    ? (backendData.admin as `0x${string}`)
+    : chainAdmin;
+  const auditor = backendData
+    ? (backendData.auditor as `0x${string}`)
+    : chainAuditor;
+  const declaredTotal = backendData
+    ? safeBigint(backendData.declaredTotal)
+    : chainDeclaredTotal;
+  const recipientCount = backendData
+    ? BigInt(backendData.recipientCount)
+    : chainRecipientCount;
+  const tokenAddress = backendData
+    ? (backendData.token as `0x${string}`)
+    : chainTokenAddress;
+
+  const phase = backendData
+    ? phaseFromBackendState(backendData.state)
+    : derivePhase(chainFinalized, chainFinalizeCheckHandle);
+
+  const isLoading = useChainFallback ? chainLoading : false;
 
   const { data: tokenSymbol } = useReadContract({
     address: tokenAddress,
@@ -82,6 +111,15 @@ export function CampaignCard({
 
   const role = useRoleInfo(walletAddress, campaignAddress);
 
+  const titleText =
+    backendData?.name && backendData.name.trim().length > 0
+      ? backendData.name
+      : shortAddr(campaignAddress);
+  const description =
+    backendData?.description && backendData.description.trim().length > 0
+      ? backendData.description
+      : null;
+
   return (
     <Link
       to={`/campaign/${campaignAddress}`}
@@ -95,8 +133,20 @@ export function CampaignCard({
             </Badge>
             <Badge variant="cipher">FHE-encrypted</Badge>
           </div>
-          <div className="font-mono text-base font-semibold tracking-tight">
-            {shortAddr(campaignAddress)}
+          <div className="space-y-1">
+            <div className="font-mono text-base font-semibold tracking-tight">
+              {titleText}
+            </div>
+            {backendData?.name && (
+              <div className="font-mono text-[11px] text-muted-foreground">
+                {shortAddr(campaignAddress)}
+              </div>
+            )}
+            {description && (
+              <p className="font-mono text-[11px] leading-relaxed text-muted-foreground">
+                {description}
+              </p>
+            )}
           </div>
         </CardHeader>
 
@@ -267,6 +317,14 @@ function MetricPill({ label, value }: { label: string; value: string }) {
 function shortAddr(addr?: `0x${string}`) {
   if (!addr) return "";
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+function safeBigint(value: string): bigint | undefined {
+  try {
+    return BigInt(value);
+  } catch {
+    return undefined;
+  }
 }
 
 function formatTokenAmount(

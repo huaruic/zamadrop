@@ -1,9 +1,11 @@
-import { Link } from "react-router-dom";
-
 import { CampaignCard } from "@/components/CampaignCard";
-import { CAMPAIGNS } from "@/config";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { useCampaignList } from "@/hooks/useCampaignList";
 
 export default function PublicHome() {
+  const { items, source, isLoading, error, refetch } = useCampaignList();
+
   return (
     <>
       <header className="mb-8 space-y-1.5">
@@ -15,21 +17,37 @@ export default function PublicHome() {
         </p>
       </header>
 
-      {CAMPAIGNS.length === 0 ? (
+      {source === "fallback" && (
+        <Alert variant="muted" className="mb-6">
+          <AlertTitle>Backend directory unavailable</AlertTitle>
+          <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+            <span>
+              Showing locally-cached campaigns
+              {error ? ` · ${error.message}` : ""}.
+            </span>
+            <Button size="sm" variant="outline" onClick={() => refetch()}>
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {isLoading && items.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-border bg-surface px-6 py-16 text-center">
+          <p className="font-mono text-sm text-muted-foreground">
+            Loading campaigns from backend…
+          </p>
+        </div>
+      ) : items.length === 0 ? (
         <EmptyState />
       ) : (
         <div className="grid grid-cols-1 gap-6">
-          {CAMPAIGNS.map((address) => (
-            <Link
-              key={address}
-              to={`/campaign/${address}`}
-              className="group block transition hover:-translate-y-0.5"
-            >
-              <CampaignCard address={address} />
-              <div className="mt-3 text-right font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground transition group-hover:text-primary">
-                Enter campaign →
-              </div>
-            </Link>
+          {items.map((item) => (
+            <CampaignCard
+              key={item.address}
+              address={item.address}
+              backendData={item.backend}
+            />
           ))}
         </div>
       )}
