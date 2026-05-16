@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAccount, useReadContracts } from "wagmi";
 
@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { CAMPAIGNS } from "@/config";
+import { useBackendCampaigns } from "@/hooks/useBackendCampaigns";
 import {
   type DirectoryPhase,
   type StatusFilter,
@@ -57,8 +58,30 @@ export default function Home() {
     return () => clearTimeout(clear);
   }, [connectError, pendingAction]);
 
+  const { data: backendAddrs } = useBackendCampaigns();
+
+  const allAddresses = useMemo<readonly `0x${string}`[]>(() => {
+    const seen = new Set<string>();
+    const out: `0x${string}`[] = [];
+    for (const addr of backendAddrs ?? []) {
+      const lower = addr.toLowerCase();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        out.push(addr);
+      }
+    }
+    for (const addr of CAMPAIGNS) {
+      const lower = addr.toLowerCase();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        out.push(addr);
+      }
+    }
+    return out;
+  }, [backendAddrs]);
+
   const { data: directoryReads } = useReadContracts({
-    contracts: CAMPAIGNS.flatMap((address) => [
+    contracts: allAddresses.flatMap((address) => [
       { address, abi: CAMPAIGN_ABI, functionName: "declaredTotal" as const },
       { address, abi: CAMPAIGN_ABI, functionName: "recipientCount" as const },
       { address, abi: CAMPAIGN_ABI, functionName: "finalized" as const },
@@ -70,7 +93,7 @@ export default function Home() {
     ]),
   });
 
-  const directoryItems: DirectoryItem[] = CAMPAIGNS.map((address, index) => {
+  const directoryItems: DirectoryItem[] = allAddresses.map((address, index) => {
     const offset = index * 4;
     const declaredTotal = directoryReads?.[offset]?.result as bigint | undefined;
     const recipientCount = directoryReads?.[offset + 1]?.result as
