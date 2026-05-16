@@ -445,3 +445,241 @@ ZamaDrop 当前最有风险的是：
 - 实际可运行命令
 - 已知 flaky 场景
 - 对应 commit SHA
+
+---
+
+## 12. 手动 E2E 回归 — 全角色全链路
+
+> 面向人工 QA 的逐步执行手册。覆盖 Admin / Recipient / Auditor / Public
+> 四角色，验证主路径 + 隐私边界 + 异常恢复。与 §11 真钱包自动化（Synpress）
+> 的关系：自动化只跑高频高价值用例（MM1–MM5），本节负责发布前的全链路
+> 人工核账，特别是隐私不变量（套件 B / D2）和资金扣款核账（套件 A3 / C2）。
+
+### 12.1 前置参数
+
+| 项 | 值 | 备注 |
+|---|---|---|
+| Campaign 规模 | N=2，declaredTotal=1000 ZDT，decimals=0 | 与 `deployments/sepolia.json` demo 同款 |
+| Token | MockToken (ZDT) | 本地链：随合约一起部；Sepolia 复用 `0x775e867541D348F022B3431209710B5BC02Ad29C` |
+| Admin / Auditor | `0x81f19692e5C59a7D7DB7D0689843C213C9BFA260`（同钱包） | wizard Step3 默认 auditor=admin |
+| Recipient #1 | `<W_R1>` | 走完整 claim 主路径 |
+| Recipient #2 | `<W_R2>` | 故意保持未 claim，用于验证聚合不变量与 V8 cancel 路径 |
+| Observer | `<W_OBS>`（可选） | 验权限边界 + Public 只读 |
+| 前端 | `http://127.0.0.1:5173` | 不要用 `localhost`，避免 cookie/header 偏差 |
+| 浏览器 | Chrome/Brave + MetaMask（非 headless） | |
+
+**双链回归**：
+
+- **L (Local)** — `npx hardhat node` + `npm run deploy:localhost`，前端连 8545，
+  fhEVM mock 替代 KMS，主验逻辑正确性。零 gas 成本、零 Gateway 等待。
+- **S (Sepolia)** — 真链，验 KMS active-pull、Gateway 出块延迟、Etherscan
+  账本可观测性、隐私边界。Admin 钱包需 ≥ 0.005 ETH + ≥ 1000 ZDT。
+
+### 12.2 套件总览（17 个用例）
+
+| 套件 | 用例 | 驱动角色 | L | S |
+|---|---|---|---|---|
+| A. Admin 部署主路径 | A1–A5 | Admin | ✓ | ✓ |
+| B. 隐私边界（核心卖点） | B1–B3 | 任意 | ✓ | ✓ |
+| C. Recipient 主路径 | C1–C3 | Recipient | ✓ | ✓ |
+| D. Auditor 主路径 | D1–D2 | Auditor | ✓ | ✓ |
+| E. Public 只读 | E1 | 无钱包 | ✓ | ✓ |
+| F. 异常 & 权限边界 | F1–F3 | 多角色 | ✓ | 选做 |
+
+### 12.3 套件 A — Admin 部署主路径
+
+#### A1. Wizard Step 1–4 草稿持久化
+
+**操作**：连 Admin → `/wizard` → Step1 填 `name="QA-DryRun" declaredTotal=1000`
+→ Step2 填 `<W_R1>, <W_R2>` → Step3 auditor=admin → Step4 review →
+**手动刷新页面** → 回 Step4。
+
+**关注指标**：localStorage `wizardStore` 含 `draftVersion`、`recipients=[...]`、
+`declaredTotal=1000`；snapshot hash 与重渲染后一致。
+
+**通过判据**：Step4 review 数据与刷新前完全一致，无 stale 提示。
+
+#### A2. Step5 五子步骤逐个走通
+
+**操作**：Step5 点 **Start deployment**，依次签 N+3 = 5 笔（5.5 不签）。
+
+| 子步 | 钱包动作 | 关注指标 | 预期 |
+|---|---|---|---|
+| 5.1 deploy | 1 笔 contract creation | `recipientListHash == keccak256(abi.encode([W_R1, W_R2]))`；构造参数 admin/auditor/token/declaredTotal 正确 | 拿到新 campaign 地址 `C_new` |
+| 5.2 fund | ERC20 `transfer(C_new, 1000)` | Admin ZDT −1000；C_new ZDT +1000；ETH −gas | 资金到位 |
+| 5.3 setAllocation × 2 | 2 笔 `setAllocation(addr, encAmount, proof)` | 每笔事件 `AllocationSet(recipient)`；`allocationSet[addr]==true`；`allocationCount: 0→1→2`；**事件 data 字段为空，topics 只有 indexed recipient** | UI `allocatedSoFar` 1/2 → 2/2 |
+| 5.4 finalize | 1 笔 `finalize()` | 事件 `FinalizeRequested(checkHandle)`；`state: Setup→Finalizing`；`finalizeCheckHandle` 非零 | 进入 5.5 |
+| 5.5 KMS active-pull | **0 钱包签名** + 1 笔 `callbackFinalize(true, proof)` | 事件 `Finalized(true)`；`state: Finalizing→Claiming`；`finalized()==true`；本地 ~3-10s，Sepolia ~10-15s | UI 跳 "Campaign live" |
+
+**通过判据**：5/5 子步骤打 ✓；wizard 显示 "Campaign live" 卡片并给出
+`/campaign/<C_new>` 分享链接。
+
+#### A3. 账户扣款核账
+
+**操作**：A2 完成后立即读 admin wallet 与 C_new 的 ZDT/ETH 余额。
+
+| 项 | 部署前 | 部署后 | 差额必须 |
+|---|---|---|---|
+| Admin ZDT | `B_zdt_0` | `B_zdt_1` | `B_zdt_0 − B_zdt_1 == 1000` 精确 |
+| C_new ZDT | 0 | 1000 | +1000 |
+| Admin ETH | `B_eth_0` | `B_eth_1` | ≈ 5 笔 gas（Sepolia ~0.005 ETH） |
+
+**通过判据**：ZDT 严格精确扣 1000；ETH 减少为 5 笔 gas 之和。
+
+#### A4. 区块链账本可观测性
+
+**操作**：在 Etherscan（S 链）或 hardhat events log（L 链）查 `C_new` 的事件。
+
+**关注指标**：
+
+- 4 个事件：`AllocationSet × 2` + `FinalizeRequested × 1` + `Finalized(true) × 1`
+- `AllocationSet`：`topics[1]` = recipient（indexed）；`data` 长度为 0
+- `recipientListHash` 等于 `keccak256(abi.encode([W_R1, W_R2]))`
+
+**通过判据**：4 事件全部链上可见且**无任何字段泄漏 amount**。
+
+#### A5. 错误恢复（拒签 + Retry）
+
+**操作**：跑 A2 但在 5.3 第 1 笔签完后**拒签**第 2 笔 → UI 报错 → 点 Retry。
+
+**关注指标**：`allocatedSoFar` 不丢；retry 跳过已完成 recipient 直接签第 2 笔；
+wizard `partialize` 排除 `deployStep` 防止刷新越界。
+
+**通过判据**：retry 后只重签 1 笔，最终 5/5 完成。
+
+### 12.4 套件 B — 隐私边界（核心卖点，必验）
+
+#### B1. AllocationSet 事件不泄漏金额
+
+**操作**：A4 拿到的 2 条 `AllocationSet` 事件，逐个查 `data` 与 `topics`。
+
+**关注指标**：
+- `topics[0] == keccak256("AllocationSet(address)")`
+- `topics[1]` = recipient 地址
+- `data == 0x`（空）
+
+**通过判据**：`data` 长度为 0，不存在任何 amount 密文/明文。建议截图存档。
+
+#### B2. 非 recipient 调 requestMyAllocation 必须 revert
+
+**操作**：用 `<W_OBS>` 调 `requestMyAllocation()`（Etherscan read 或本地 console）。
+
+**通过判据**：revert reason = `NoAllocation()`。
+
+#### B3. 跨 recipient ACL 隔离
+
+**操作**：用 `<W_R1>` 钱包尝试 relayer SDK `userDecrypt` `<W_R2>` 的 `_allocation` handle。
+
+**关注指标**：Gateway 返回 ACL 拒绝（无 KMS 签名）；前端报 "not allowed" 类错误。
+
+**通过判据**：W_R1 拿不到 W_R2 的 amount 明文。
+
+### 12.5 套件 C — Recipient 主路径
+
+#### C1. Recipient 解密自己 allocation
+
+**操作**：换 `<W_R1>` → `/campaign/<C_new>/me` → 点 **Decrypt my amount** →
+同意 EIP-712 签名。
+
+**关注指标**：`requestMyAllocation()` 返回非零 handle；KMS user-decrypt 后 UI
+渲染金额；**仅签名，不发起任何链上交易**。
+
+**通过判据**：UI 显示的 amount 等于 Step2 录入值。
+
+#### C2. claim + executeTransfer
+
+**操作**：W_R1 在同页点 **Claim** → 签 `claim()` → 等 KMS active-pull →
+自动签 `executeTransfer(W_R1, amount, proof)`（共 2 笔 tx）。
+
+| 项 | 关注 | 预期 |
+|---|---|---|
+| `claim()` 事件 | `Claimed(W_R1)` + `ClaimRequested(W_R1, handle)` | 双事件触发 |
+| `claimed[W_R1]` | 链上读 | `true` |
+| `pendingClaimHandle[W_R1]` | 链上读 | 非零 |
+| `executeTransfer` 事件 | `TokenTransferred(W_R1, amount)` | amount 此时为 plaintext（转账已发生） |
+| `transferred[W_R1]` | 链上读 | `true` |
+| `claimedTotalPlaintext` | 链上读 | == W_R1 amount |
+| W_R1 ZDT 余额 | 钱包 / Etherscan | +amount |
+| C_new ZDT 余额 | Etherscan | −amount |
+
+**通过判据**：钱包 ZDT 严格 +amount；合约余额 −amount；Stepper 显示 "Claimed"。
+
+#### C3. 重复 claim 必须 revert
+
+**操作**：C2 完成后 W_R1 再点 Claim。
+
+**通过判据**：tx 在 estimate 阶段 revert（`AlreadyClaimed()`），不消耗 gas。
+
+### 12.6 套件 D — Auditor 主路径
+
+#### D1. Auditor 解密 claimedTotal
+
+**操作**：换 admin=auditor 钱包 → `/campaign/<C_new>/audit` → 点
+**Decrypt aggregate**。
+
+**关注指标**：`requestClaimedTotalForAuditor()` 返回 handle；user-decrypt 后
+UI 显示 `claimedTotal`；**值必须等于 `claimedTotalPlaintext`**（密文聚合 ==
+明文累加器，双重核账）。
+
+**通过判据**：两值完全相等。
+
+#### D2. Auditor 不能看任何个人金额
+
+**操作**：检查 auditor tab 是否暴露 per-recipient 金额列；尝试用 auditor
+钱包 user-decrypt `_allocation[<W_R1>]` handle。
+
+**通过判据**：UI 不暴露个人数；ACL 拒绝个体解密。
+
+### 12.7 套件 E — Public 只读
+
+#### E1. 未连钱包看公共数据
+
+**操作**：新隐身窗口（**不连钱包**）打 `/campaign/<C_new>`。
+
+**关注指标**：`declaredTotal=1000`、`recipientCount=2`、`state=Claiming`、
+`claimedTotalPlaintext`、`recipientListHash` 全部可见；4 tab 都显示但
+admin/recipient/auditor 标 `· preview`。
+
+**通过判据**：无钱包能看公共账本；role-gated tab 仅 read-only preview，
+没有可点的签名按钮。
+
+### 12.8 套件 F — 异常 & 权限边界
+
+#### F1. 错链 banner + 切链
+
+**操作**：钱包切 Mainnet → 进 `/wizard` 或 `/campaign/<C_new>/admin`。
+
+**通过判据**：顶部 wrong-chain banner；写按钮 disabled；点 Switch 触发
+`wallet_switchEthereumChain`；切回 Sepolia 后按钮恢复。
+
+#### F2. 非 admin 调 setAllocation revert
+
+**操作**：用 `<W_OBS>` 钱包调 `setAllocation`（Etherscan write 或 hardhat console）。
+
+**通过判据**：revert `NotAdmin()`。
+
+#### F3. EIP-712 拒签后可重试
+
+**操作**：C1 解密时**故意拒签** → UI 报错 → 再点 Decrypt。
+
+**通过判据**：第二次签名弹窗正常；不残留 "decrypting…" 锁死状态；不需刷新。
+
+### 12.9 回归触发策略
+
+| 触发条件 | 必跑 |
+|---|---|
+| 改 `contracts/ZamaDropCampaign.sol` 任何函数/event/state | A+B+C+D 全套 in L；A2/A3/A4 + C1/C2 + B1 in S |
+| 改 wizard `Step5Deploy.tsx` / `deploy.ts` / `kms-active-pull.ts` | A2/A5 + C2 全跑（KMS active-pull 高风险点） |
+| 改角色页 `admin/* recipient/* auditor/*` | 对应套件全跑 + E1 |
+| 改 ACL（任何 `FHE.allow*` 调用） | B1/B2/B3 + D2 必跑（隐私回归） |
+| 改 `MockToken` 或 token 集成 | A3 + C2 余额核账 |
+| 仅文档 / CLI 改动 | 不必 |
+| 发布前 / Sepolia 重新部署 | 全套 in S |
+
+### 12.10 通过门槛
+
+- **L 链**：A1–A5 + B1–B3 + C1–C3 + D1–D2 + E1 + F1–F3 = **17/17 全过**
+  才合并 PR。
+- **S 链**：A2/A3/A4 + B1 + C1/C2 + D1 + E1 = **8 条核心** 全过才能挂
+  "KMS-hardened" 标签。
+- **任意隐私套件失败（B1/B2/B3/D2）= block release**，无例外。
